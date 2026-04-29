@@ -1,0 +1,14 @@
+{
+  "name": "nebula-command",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A browser RTS economy prototype with cartbot workers, ore, lumber, and base management.",
+  "scripts": {
+    "start": "node scripts/serve.js",
+    "check": "node --check src/game.js && node --check scripts/serve.js && node --check tests/smoke.js",
+    "smoke": "node tests/smoke.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.59.1"
+  }
+}

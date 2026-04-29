@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nebula Command</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="src/styles.css" />
+  </head>
+  <body>
+    <main id="gameShell">
+      <canvas id="gameCanvas" aria-label="Nebula Command battlefield"></canvas>
+
+      <section id="topHud" class="hud-panel" aria-label="Resources">
+        <div class="brand-block">
+          <span class="brand-mark"></span>
+          <div>
+            <strong>Nebula Command</strong>
+            <small>Atlas Directorate</small>
+          </div>
+        </div>
+        <div class="resource-strip">
+          <div class="resource">
+            <span class="resource-swatch ore"></span>
+            <span id="oreValue">0</span>
+          </div>
+          <div class="resource">
+            <span class="resource-swatch wood"></span>
+            <span id="woodValue">0</span>
+          </div>
+          <div class="resource">
+            <span class="resource-swatch peon"></span>
+            <span id="workerValue">0 bots</span>
+          </div>
+        </div>
+        <div id="alertFeed" aria-live="polite"></div>
+      </section>
+
+      <aside id="commandPanel" class="hud-panel" aria-label="Command card">
+        <div id="portrait">
+          <div id="portraitIcon"></div>
+          <div>
+            <strong id="selectionName">No Selection</strong>
+            <small id="selectionMeta">Select a unit or structure</small>
+          </div>
+        </div>
+        <div id="actionGrid"></div>
+        <div id="selectionList"></div>
+      </aside>
+
+      <section id="bottomHud" class="hud-panel">
+        <div id="statusCluster">
+          <div id="statusLine">Base landed. Cartbot brain online.</div>
+          <div id="managementStrip" aria-label="Worker management">
+            <div class="metric"><span id="idleBots">0</span><small>Idle</small></div>
+            <div class="metric"><span id="oreBots">0</span><small>Ore</small></div>
+            <div class="metric"><span id="lumberBots">0</span><small>Lumber</small></div>
+            <div class="metric"><span id="returningBots">0</span><small>Return</small></div>
+            <div class="metric"><span id="buildBots">0</span><small>Build</small></div>
+            <div class="metric"><span id="reconBots">0</span><small>Recon</small></div>
+            <div class="metric"><span id="attackBots">0</span><small>Combat</small></div>
+          </div>
+          <div id="groupStrip" aria-label="Control groups"></div>
+        </div>
+        <canvas id="miniMap" width="180" height="120" aria-label="Minimap"></canvas>
+      </section>
+
+      <div id="tooltip" role="tooltip"></div>
+      <div id="placementHint" class="hud-panel hidden">Place structure</div>
+      <div id="endOverlay" class="hidden">
+        <div>
+          <h1 id="endTitle">Reset</h1>
+          <p id="endText">Start the economy slice again.</p>
+          <button id="restartButton" type="button">Restart</button>
+        </div>
+      </div>
+    </main>
+
+    <script src="src/game.js" defer></script>
+  </body>
+</html>
