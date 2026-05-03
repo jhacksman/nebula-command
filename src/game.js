@@ -678,6 +678,7 @@
       maxHp: def.hp,
       queue: [],
       rally: null,
+      autoExport: false,
       build: options.build || null,
       underConstruction: Boolean(options.underConstruction),
     };
@@ -786,7 +787,7 @@
     state.resources.chips += cost.chips || 0;
   }
 
-  function queueBrainShipment(base) {
+  function queueBrainShipment(base, source = "manual") {
     const shipment = TRADE_SHIPMENTS.brainChip;
     if (!spend(shipment.cost)) {
       announce("Need more ore and lumber for export.");
@@ -799,7 +800,7 @@
       cost: { ...shipment.cost },
       reward: { ...shipment.reward },
     });
-    announce("Export queued. Brain chips inbound.");
+    announce(source === "auto" ? "Auto export queued. Brain chips inbound." : "Export queued. Brain chips inbound.");
     refreshUi();
   }
 
@@ -820,6 +821,12 @@
     state.resources.chips += reward.chips || 0;
     addMarker(base.x, base.y, "brain", "deposit");
     raiseWorldAlert(`${reward.chips || 1} brain chip${(reward.chips || 1) === 1 ? "" : "s"} delivered.`, base.x, base.y, "tech");
+  }
+
+  function toggleAutoExport(base) {
+    base.autoExport = !base.autoExport;
+    announce(base.autoExport ? "Auto export route enabled." : "Auto export route paused.");
+    refreshUi();
   }
 
   function nextBrainTier(unit) {
@@ -943,6 +950,7 @@
     updateCamera(dt);
     updateUnits(dt);
     updateProduction(dt);
+    updateAutoExports();
     applySeparation(dt);
     enforceStaticOccupancy();
     updateMarkers(dt);
@@ -1163,6 +1171,14 @@
         if (item.type === "brainShipment") completeBrainShipment(building, item);
         refreshUi();
       }
+    }
+  }
+
+  function updateAutoExports() {
+    for (const base of state.buildings.filter((building) => building.type === "mainBase" && building.autoExport && building.hp > 0)) {
+      if (base.queue.some((item) => item.type === "brainShipment")) continue;
+      if (!canAfford(TRADE_SHIPMENTS.brainChip.cost)) continue;
+      queueBrainShipment(base, "auto");
     }
   }
 
@@ -2869,10 +2885,11 @@
 
   function baseStateText(base) {
     const rally = base.rally ? ` - ${rallyText(base.rally)}` : "";
-    if (!base.queue.length) return `Queue empty${rally}`;
+    const auto = base.autoExport ? " - Auto export" : "";
+    if (!base.queue.length) return `Queue empty${rally}${auto}`;
     const item = base.queue[0];
     const pct = Math.round((1 - item.remaining / item.total) * 100);
-    return `${queueItemLabel(item)} - ${pct}% (${base.queue.length} queued)${rally}`;
+    return `${queueItemLabel(item)} - ${pct}% (${base.queue.length} queued)${rally}${auto}`;
   }
 
   function queueItemLabel(item) {
@@ -2932,6 +2949,15 @@
           tip: "Cancel the newest export shipment and return its resources.",
           disabled: !base.queue.some((item) => item.type === "brainShipment"),
           onClick: () => cancelQueuedBrainShipment(base),
+        }),
+        commandButton({
+          label: base.autoExport ? "Pause Export" : "Auto Export",
+          icon: "O",
+          color: base.autoExport ? "#ffcf67" : "#91a7ff",
+          cost: null,
+          tip: "Automatically queue one brain-chip export whenever resources are available.",
+          active: base.autoExport,
+          onClick: () => toggleAutoExport(base),
         }),
       );
       return;
@@ -3061,6 +3087,8 @@
           return;
         }
         appendDetailRow("Capacity", `${usedWorkerCapacity()}/${workerCapacity()} bots`);
+        appendDetailRow("Export Route", entity.autoExport ? "Auto" : "Manual");
+        appendDetailRow("Brain Chips", `${state.resources.chips} stored`);
         if (entity.queue.length) {
           entity.queue.forEach((item, index) => {
             const pct = index === 0 ? 1 - item.remaining / item.total : 0;
@@ -3361,6 +3389,11 @@
     if (key === "t") {
       const base = selectedMainBase();
       if (base) queueBrainShipment(base);
+      return;
+    }
+    if (key === "o") {
+      const base = selectedMainBase();
+      if (base) toggleAutoExport(base);
       return;
     }
     if (key === "i") {

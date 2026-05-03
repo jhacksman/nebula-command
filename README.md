@@ -32,6 +32,7 @@ npm run smoke
 - Bots gather ore or lumber, return to the main base, and repeat.
 - Ore and lumber can be exported through the main base for offsite brain chips.
 - Imported brain chips install better cartbot brains: Route Brains move/gather faster, Builder Brains carry more and construct faster.
+- The main base can toggle auto-export so brain-chip shipments keep flowing once the local economy can afford them.
 - The main base fabricates more bots, reserves worker capacity for queued bots, and can cancel the newest queued bot for a full refund.
 - The main base can rally new bots to ground or directly to an ore/lumber node.
 - Gatherers automatically retarget to the nearest same-type resource when their current node is exhausted.
@@ -62,6 +63,7 @@ npm run smoke
 - R: recon route command mode.
 - B: build Battery Bank placement mode.
 - T: queue an export shipment when the main base is selected.
+- O: toggle auto-export when the main base is selected.
 - I: install the next brain tier into selected cartbots when affordable.
 - S: stop selected bots.
 - Ctrl+1 through Ctrl+9: save selected units only.

@@ -51,6 +51,7 @@ async function run() {
     await page.waitForTimeout(150);
     const baseCommands = await page.locator("#actionGrid").textContent();
     assert(/Export Goods/.test(baseCommands || ""), "Main base is missing Export Goods command.");
+    assert(/Auto Export/.test(baseCommands || ""), "Main base is missing Auto Export command.");
 
     await page.mouse.click(725, 340);
     await page.waitForTimeout(150);

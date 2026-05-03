@@ -1361,9 +1361,11 @@ The colony is a remote extraction site, not a semiconductor factory. Ore and lum
 ### First Implemented Loop
 
 - Main Base command: Export Goods.
+- Main Base command: Auto Export.
 - Export cost: 80 ore and 35 lumber.
 - Export time: 11 seconds.
 - Reward: 1 brain chip.
+- Auto Export keeps one brain-chip shipment queued whenever resources are available.
 - Cartbot command: Install Brain.
 - Brain chips appear in the top HUD as a third strategic resource.
 
