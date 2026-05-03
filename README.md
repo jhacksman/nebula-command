@@ -33,6 +33,7 @@ npm run smoke
 - Ore and lumber can be exported through the main base for offsite brain chips.
 - Imported brain chips install better cartbot brains: Route Brains move/gather faster, Builder Brains carry more and construct faster.
 - The main base can toggle auto-export so brain-chip shipments keep flowing once the local economy can afford them.
+- The colony autosaves in browser local storage, including brain chips, upgraded bots, queues, and camera position.
 - The main base fabricates more bots, reserves worker capacity for queued bots, and can cancel the newest queued bot for a full refund.
 - The main base can rally new bots to ground or directly to an ore/lumber node.
 - Gatherers automatically retarget to the nearest same-type resource when their current node is exhausted.

@@ -35,6 +35,7 @@
   const WORLD = { w: 3000, h: 2100 };
   const HEX = { size: 54, originX: 72, originY: 62 };
   const SQRT3 = Math.sqrt(3);
+  const SAVE_KEY = "nebula-command-save-v1";
 
   const PLAYER = "#79e6c8";
   const ORE = "#66d8ff";
@@ -177,6 +178,7 @@
     last: performance.now(),
     elapsed: 0,
     hudTimer: 0,
+    saveTimer: 4,
     dpr: 1,
     alert: { text: "", t: 0 },
     worldAlerts: [],
@@ -546,7 +548,14 @@
     state.alertFocusIndex = 0;
     state.elapsed = 0;
     state.hudTimer = 0;
+    state.saveTimer = 4;
     state.lastClick = { time: 0, x: 0, y: 0, type: "", kind: "" };
+
+    if (loadSavedGame()) {
+      updateMouseWorld();
+      refreshUi();
+      return;
+    }
 
     const base = addBuildingAtHex("mainBase", 4, 4);
     setGroundRally(base, axialToWorld(6, 4), false);
@@ -957,6 +966,63 @@
     updateAlerts(dt);
     removeDeadDummies();
     syncHud(dt);
+    updateAutosave(dt);
+  }
+
+  function saveSnapshot() {
+    return {
+      version: 1,
+      resources: state.resources,
+      units: state.units,
+      buildings: state.buildings,
+      nodes: state.nodes,
+      dummies: state.dummies,
+      nextId: state.nextId,
+      camera: state.camera,
+      controlGroups: [...state.controlGroups.entries()],
+      selectedIds: [...state.selectedIds],
+    };
+  }
+
+  function restoreSnapshot(snapshot) {
+    if (!snapshot || snapshot.version !== 1 || !Array.isArray(snapshot.units) || !Array.isArray(snapshot.buildings)) return false;
+    state.resources = { ore: 0, wood: 0, chips: 0, ...(snapshot.resources || {}) };
+    state.units = snapshot.units;
+    state.buildings = snapshot.buildings;
+    state.nodes = snapshot.nodes || [];
+    state.dummies = snapshot.dummies || [];
+    state.nextId = snapshot.nextId || 1;
+    state.camera = snapshot.camera || { x: 70, y: 35, zoom: Math.min(1, Math.max(0.68, innerWidth / 1320)) };
+    state.controlGroups = new Map(snapshot.controlGroups || []);
+    state.selectedIds = new Set((snapshot.selectedIds || []).filter((id) => allSelectable().some((entity) => entity.id === id)));
+    announce("Saved colony restored.");
+    return true;
+  }
+
+  function loadSavedGame() {
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) return false;
+      return restoreSnapshot(JSON.parse(raw));
+    } catch (error) {
+      console.warn("Save load failed", error);
+      return false;
+    }
+  }
+
+  function saveGame() {
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify(saveSnapshot()));
+    } catch (error) {
+      console.warn("Save failed", error);
+    }
+  }
+
+  function updateAutosave(dt) {
+    state.saveTimer -= dt;
+    if (state.saveTimer > 0) return;
+    state.saveTimer = 4;
+    saveGame();
   }
 
   function syncHud(dt) {

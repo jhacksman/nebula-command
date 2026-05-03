@@ -1381,6 +1381,7 @@ The colony is a remote extraction site, not a semiconductor factory. Ore and lum
 - The player should understand why advanced chips arrive from elsewhere: this site is dirty, temporary, and resource-heavy.
 - The long-term tech tree can unlock better offsite contracts, better local refining, and eventually limited local fabrication.
 - The first browser slice should let the player feel one clear arc: gather, export, receive a chip, improve a cartbot, expand faster.
+- Browser persistence should be local-first: autosave to local storage, no account, no backend, no subscription service.
 
 ## Later Additions
 

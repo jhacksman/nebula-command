@@ -94,6 +94,7 @@ async function run() {
 
     await page.keyboard.press("Space");
     await page.waitForTimeout(150);
+    await page.waitForFunction(() => Boolean(localStorage.getItem("nebula-command-save-v1")), null, { timeout: 6000 });
 
     console.log("Smoke test passed.");
   } finally {
