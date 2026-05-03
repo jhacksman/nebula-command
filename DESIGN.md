@@ -1346,6 +1346,40 @@ This pass fixes the HUD/minimap camera leak and makes the browser controls feel 
 - Pressing Space focuses the most recent important world alert.
 - World alerts create a red fading minimap ping.
 
+## Remote Brain Economy Pass
+
+The colony is a remote extraction site, not a semiconductor factory. Ore and lumber are local. Advanced cartbot brains come from offsite industry and arrive through trade.
+
+### Economy Shape
+
+- Mine local ore and lumber.
+- Export practical bundles through the main base.
+- Offsite foundries and chip fabs send back brain chips.
+- Brain chips install into individual cartbots.
+- Better brains make cartbots more autonomous and useful before the colony can support more complex local industry.
+
+### First Implemented Loop
+
+- Main Base command: Export Goods.
+- Export cost: 80 ore and 35 lumber.
+- Export time: 11 seconds.
+- Reward: 1 brain chip.
+- Cartbot command: Install Brain.
+- Brain chips appear in the top HUD as a third strategic resource.
+
+### Brain Tiers
+
+- Basic Brain: normal movement, gathering, carrying, and building.
+- Route Brain: faster movement and slightly faster gathering.
+- Builder Brain: faster movement, faster gathering, +5 carry capacity, and faster construction.
+
+### Design Intent
+
+- Progression should feel like earning automation, not buying abstract upgrades.
+- The player should understand why advanced chips arrive from elsewhere: this site is dirty, temporary, and resource-heavy.
+- The long-term tech tree can unlock better offsite contracts, better local refining, and eventually limited local fabrication.
+- The first browser slice should let the player feel one clear arc: gather, export, receive a chip, improve a cartbot, expand faster.
+
 ## Later Additions
 
 Only after the economy foundation works:

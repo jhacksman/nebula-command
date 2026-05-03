@@ -2,6 +2,8 @@
 
 A browser RTS economy prototype: main base, compact robot gatherers, ore, lumber, production queue, and standard RTS selection behavior.
 
+Playable web build, once GitHub Pages finishes deploying: `https://jhacksman.github.io/nebula-command/`
+
 ## Run
 
 Open `index.html` in a browser, or run a local static server:
@@ -28,6 +30,8 @@ npm run smoke
 - One landed main base, 50 starting resources, and one deployed cartbot for the playable slice.
 - Gatherer bots use two wheels, top grippers, and a compact two-basket cart body.
 - Bots gather ore or lumber, return to the main base, and repeat.
+- Ore and lumber can be exported through the main base for offsite brain chips.
+- Imported brain chips install better cartbot brains: Route Brains move/gather faster, Builder Brains carry more and construct faster.
 - The main base fabricates more bots, reserves worker capacity for queued bots, and can cancel the newest queued bot for a full refund.
 - The main base can rally new bots to ground or directly to an ore/lumber node.
 - Gatherers automatically retarget to the nearest same-type resource when their current node is exhausted.
@@ -57,6 +61,8 @@ npm run smoke
 - G: gather command mode.
 - R: recon route command mode.
 - B: build Battery Bank placement mode.
+- T: queue an export shipment when the main base is selected.
+- I: install the next brain tier into selected cartbots when affordable.
 - S: stop selected bots.
 - Ctrl+1 through Ctrl+9: save selected units only.
 - 1 through 9: recall a saved control group.
@@ -67,7 +73,7 @@ npm run smoke
 
 ## Possible Next Gameplay Pass
 
-- Add Lumber Yard and Ore Refinery.
-- Add processed materials and milestone unlocks.
+- Add Lumber Yard and Ore Refinery as the first local processing buildings.
+- Add processed materials and explicit milestone unlocks for the offsite brain economy.
 - Add dropoff buildings and richer placement rules.
 - Add combat only after the economy and Satisfactory-like tech progression work.
