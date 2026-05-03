@@ -155,6 +155,11 @@ button {
   box-shadow: 0 0 10px rgba(216, 157, 89, 0.75);
 }
 
+.resource-swatch.chip {
+  background: #91a7ff;
+  box-shadow: 0 0 10px rgba(145, 167, 255, 0.8);
+}
+
 .resource-swatch.peon {
   background: var(--peon);
   box-shadow: 0 0 10px rgba(255, 207, 103, 0.75);

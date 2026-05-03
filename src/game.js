@@ -9,6 +9,7 @@
   const ui = {
     ore: document.getElementById("oreValue"),
     wood: document.getElementById("woodValue"),
+    chips: document.getElementById("chipValue"),
     workers: document.getElementById("workerValue"),
     alerts: document.getElementById("alertFeed"),
     topHud: document.getElementById("topHud"),
@@ -90,6 +91,44 @@
     },
   };
 
+  const TRADE_SHIPMENTS = {
+    brainChip: {
+      label: "Brain Chips",
+      cost: { ore: 80, wood: 35 },
+      reward: { chips: 1 },
+      time: 11,
+    },
+  };
+
+  const BRAIN_TIERS = [
+    {
+      label: "Basic Brain",
+      short: "Basic",
+      speedMult: 1,
+      gatherMult: 1,
+      buildMult: 1,
+      carryBonus: 0,
+    },
+    {
+      label: "Route Brain",
+      short: "Route",
+      cost: { chips: 1 },
+      speedMult: 1.18,
+      gatherMult: 0.92,
+      buildMult: 1,
+      carryBonus: 0,
+    },
+    {
+      label: "Builder Brain",
+      short: "Builder",
+      cost: { chips: 2, ore: 35 },
+      speedMult: 1.28,
+      gatherMult: 0.84,
+      buildMult: 1.45,
+      carryBonus: 5,
+    },
+  ];
+
   const BUILDING_TYPES = {
     mainBase: {
       label: "Main Base",
@@ -111,7 +150,7 @@
   };
 
   const state = {
-    resources: { ore: 50, wood: 0 },
+    resources: { ore: 50, wood: 0, chips: 0 },
     units: [],
     buildings: [],
     nodes: [],
@@ -489,7 +528,7 @@
   }
 
   function init() {
-    state.resources = { ore: 50, wood: 0 };
+    state.resources = { ore: 50, wood: 0, chips: 0 };
     state.units = [];
     state.buildings = [];
     state.nodes = [];
@@ -615,6 +654,7 @@
       carried: null,
       gatherTimer: 0,
       attackTimer: 0,
+      brainTier: 0,
       anim: Math.random() * 10,
     };
     state.units.push(unit);
@@ -680,7 +720,7 @@
   }
 
   function canAfford(cost) {
-    return state.resources.ore >= (cost.ore || 0) && state.resources.wood >= (cost.wood || 0);
+    return state.resources.ore >= (cost.ore || 0) && state.resources.wood >= (cost.wood || 0) && state.resources.chips >= (cost.chips || 0);
   }
 
   function workerCapacity() {
@@ -707,6 +747,7 @@
     if (!canAfford(cost)) return false;
     state.resources.ore -= cost.ore || 0;
     state.resources.wood -= cost.wood || 0;
+    state.resources.chips -= cost.chips || 0;
     refreshUi();
     return true;
   }
@@ -742,6 +783,83 @@
   function refund(cost) {
     state.resources.ore += cost.ore || 0;
     state.resources.wood += cost.wood || 0;
+    state.resources.chips += cost.chips || 0;
+  }
+
+  function queueBrainShipment(base) {
+    const shipment = TRADE_SHIPMENTS.brainChip;
+    if (!spend(shipment.cost)) {
+      announce("Need more ore and lumber for export.");
+      return;
+    }
+    base.queue.push({
+      type: "brainShipment",
+      remaining: shipment.time,
+      total: shipment.time,
+      cost: { ...shipment.cost },
+      reward: { ...shipment.reward },
+    });
+    announce("Export queued. Brain chips inbound.");
+    refreshUi();
+  }
+
+  function cancelQueuedBrainShipment(base) {
+    const index = base.queue.map((item) => item.type).lastIndexOf("brainShipment");
+    if (index < 0) {
+      announce("No export shipment queued.");
+      return;
+    }
+    const [item] = base.queue.splice(index, 1);
+    refund(item.cost || TRADE_SHIPMENTS.brainChip.cost);
+    announce("Export canceled. Resources returned.");
+    refreshUi();
+  }
+
+  function completeBrainShipment(base, item) {
+    const reward = item.reward || TRADE_SHIPMENTS.brainChip.reward;
+    state.resources.chips += reward.chips || 0;
+    addMarker(base.x, base.y, "brain", "deposit");
+    raiseWorldAlert(`${reward.chips || 1} brain chip${(reward.chips || 1) === 1 ? "" : "s"} delivered.`, base.x, base.y, "tech");
+  }
+
+  function nextBrainTier(unit) {
+    return BRAIN_TIERS[(unit.brainTier || 0) + 1] || null;
+  }
+
+  function selectedBrainUpgradeCost() {
+    const upgradable = selectedUnits().filter((unit) => nextBrainTier(unit));
+    if (!upgradable.length) return null;
+    return upgradable.reduce(
+      (total, unit) => {
+        const cost = nextBrainTier(unit).cost || {};
+        total.ore += cost.ore || 0;
+        total.wood += cost.wood || 0;
+        total.chips += cost.chips || 0;
+        return total;
+      },
+      { ore: 0, wood: 0, chips: 0 },
+    );
+  }
+
+  function upgradeSelectedBrains() {
+    const units = selectedUnits().filter((unit) => nextBrainTier(unit));
+    if (!units.length) {
+      announce("Selected cartbots already have the best brain.");
+      return;
+    }
+    const cost = selectedBrainUpgradeCost();
+    if (!canAfford(cost)) {
+      announce("Need more brain chips for upgrades.");
+      return;
+    }
+    spend(cost);
+    for (const unit of units) {
+      unit.brainTier += 1;
+      state.hitFlashes.push({ x: unit.x, y: unit.y, t: 0.32, max: 0.32 });
+    }
+    const topTier = units.reduce((best, unit) => Math.max(best, unit.brainTier), 0);
+    announce(`${units.length} cartbot${units.length === 1 ? "" : "s"} upgraded to ${BRAIN_TIERS[topTier].label}.`);
+    refreshUi();
   }
 
   function spawnPeon(base, type) {
@@ -798,6 +916,26 @@
       return;
     }
     if (base.rally.type === "point") setMoveOrder(unit, base.rally);
+  }
+
+  function brainTier(unit) {
+    return BRAIN_TIERS[unit.brainTier || 0] || BRAIN_TIERS[0];
+  }
+
+  function unitSpeed(unit) {
+    return UNIT_TYPES[unit.type].speed * brainTier(unit).speedMult;
+  }
+
+  function unitGatherTime(unit) {
+    return UNIT_TYPES[unit.type].gatherTime * brainTier(unit).gatherMult;
+  }
+
+  function unitCarryCapacity(unit) {
+    return UNIT_TYPES[unit.type].carry + brainTier(unit).carryBonus;
+  }
+
+  function unitBuildRate(unit) {
+    return brainTier(unit).buildMult;
   }
 
   function update(dt) {
@@ -897,8 +1035,8 @@
     if (order.phase === "gathering") {
       unit.gatherTimer += dt;
       unit.angle = Math.atan2(node.y - unit.y, node.x - unit.x);
-      if (unit.gatherTimer < UNIT_TYPES.peon.gatherTime) return;
-      const amount = Math.min(UNIT_TYPES.peon.carry, node.amount);
+      if (unit.gatherTimer < unitGatherTime(unit)) return;
+      const amount = Math.min(unitCarryCapacity(unit), node.amount);
       if (amount <= 0) {
         retargetGather(unit, node.type, node.id);
         return;
@@ -1000,7 +1138,7 @@
     activeBuilds.add(building.id);
 
     unit.angle = Math.atan2(building.y - unit.y, building.x - unit.x);
-    building.build.remaining = Math.max(0, building.build.remaining - dt);
+    building.build.remaining = Math.max(0, building.build.remaining - dt * unitBuildRate(unit));
     building.hp = Math.max(1, Math.round(building.maxHp * (1 - building.build.remaining / building.build.total)));
     if (building.build.remaining > 0) return;
 
@@ -1021,7 +1159,8 @@
       item.remaining = Math.max(0, item.remaining - dt);
       if (item.remaining <= 0) {
         building.queue.shift();
-        spawnPeon(building, item.type);
+        if (item.type === "peon") spawnPeon(building, item.type);
+        if (item.type === "brainShipment") completeBrainShipment(building, item);
         refreshUi();
       }
     }
@@ -1337,7 +1476,7 @@
     const dy = point.y - unit.y;
     const d = Math.hypot(dx, dy);
     if (d <= stopDistance + 0.75) return true;
-    const step = Math.min(d - stopDistance, UNIT_TYPES[unit.type].speed * dt);
+    const step = Math.min(d - stopDistance, unitSpeed(unit) * dt);
     unit.x += (dx / d) * step;
     unit.y += (dy / d) * step;
     unit.angle = Math.atan2(dy, dx);
@@ -2173,6 +2312,7 @@
     if (type === "attack") return "#ff8a68";
     if (type === "recon") return "#ffcf67";
     if (type === "build") return "#91a7ff";
+    if (type === "brain") return "#91a7ff";
     return PLAYER;
   }
 
@@ -2542,6 +2682,7 @@
     hideTooltip();
     ui.ore.textContent = Math.floor(state.resources.ore);
     ui.wood.textContent = Math.floor(state.resources.wood);
+    ui.chips.textContent = `${Math.floor(state.resources.chips)} chips`;
     ui.workers.textContent = `${usedWorkerCapacity()}/${workerCapacity()} bots`;
     ui.status.textContent = statusText();
     renderManagement();
@@ -2596,7 +2737,8 @@
     if (state.commandMode) return modeStatusText();
     const active = state.units.filter((unit) => unit.order?.type && unit.order.type !== "idle").length;
     const queued = state.buildings.reduce((total, building) => total + building.queue.length, 0);
-    return `${active}/${state.units.length} cartbots active. Queue: ${queued}. Capacity: ${usedWorkerCapacity()}/${workerCapacity()}.`;
+    const upgraded = state.units.filter((unit) => unit.brainTier > 0).length;
+    return `${active}/${state.units.length} cartbots active. Queue: ${queued}. Capacity: ${usedWorkerCapacity()}/${workerCapacity()}. Brains: ${upgraded}/${state.units.length}.`;
   }
 
   function renderManagement() {
@@ -2659,21 +2801,22 @@
     const carry = unit.carried ? ` carrying ${unit.carried.amount} ${RESOURCE_TYPES[unit.carried.type].carryLabel}` : "";
     const queued = buildQueueCount(unit);
     const queueText = queued ? `, ${queued} build queued` : "";
-    if (!unit.order || unit.order.type === "idle") return `Idle${carry}`;
-    if (unit.order.type === "move") return `Moving${carry}`;
+    const brain = BRAIN_TIERS[unit.brainTier || 0].short;
+    if (!unit.order || unit.order.type === "idle") return `${brain}: Idle${carry}`;
+    if (unit.order.type === "move") return `${brain}: Moving${carry}`;
     if (unit.order.type === "gather") {
       const returnType = unit.carried?.type || unit.order.resourceType;
-      if (unit.order.phase === "returning") return `Returning ${RESOURCE_TYPES[returnType].label}${carry}`;
-      return `Gathering ${RESOURCE_TYPES[unit.order.resourceType].label}${carry}`;
+      if (unit.order.phase === "returning") return `${brain}: Returning ${RESOURCE_TYPES[returnType].label}${carry}`;
+      return `${brain}: Gathering ${RESOURCE_TYPES[unit.order.resourceType].label}${carry}`;
     }
-    if (unit.order.type === "attack") return "Attacking";
-    if (unit.order.type === "attackMove") return "Attack-moving";
-    if (unit.order.type === "recon") return "Recon route";
+    if (unit.order.type === "attack") return `${brain}: Attacking`;
+    if (unit.order.type === "attackMove") return `${brain}: Attack-moving`;
+    if (unit.order.type === "recon") return `${brain}: Recon route`;
     if (unit.order.type === "build") {
       const building = getBuilding(unit.order.buildingId);
-      return `Building ${building ? BUILDING_TYPES[building.type].label : "Structure"}${queueText}`;
+      return `${brain}: Building ${building ? BUILDING_TYPES[building.type].label : "Structure"}${queueText}`;
     }
-    return `Ready${carry}`;
+    return `${brain}: Ready${carry}`;
   }
 
   function resourceStateText(node) {
@@ -2710,7 +2853,13 @@
     if (!base.queue.length) return `Queue empty${rally}`;
     const item = base.queue[0];
     const pct = Math.round((1 - item.remaining / item.total) * 100);
-    return `Fabricating Cartbot - ${pct}% (${base.queue.length} queued)${rally}`;
+    return `${queueItemLabel(item)} - ${pct}% (${base.queue.length} queued)${rally}`;
+  }
+
+  function queueItemLabel(item) {
+    if (item.type === "peon") return "Fabricating Cartbot";
+    if (item.type === "brainShipment") return "Exporting for Brain Chips";
+    return "Processing";
   }
 
   function rallyText(rally) {
@@ -2744,14 +2893,33 @@
           color: "#ff8a68",
           cost: null,
           tip: "Cancel the newest queued cartbot and refund its cost.",
-          disabled: !base.queue.length,
+          disabled: !base.queue.some((item) => item.type === "peon"),
           onClick: () => cancelQueuedPeon(base),
+        }),
+        commandButton({
+          label: "Export Goods",
+          icon: "T",
+          color: "#91a7ff",
+          cost: TRADE_SHIPMENTS.brainChip.cost,
+          tip: "Ship ore and lumber offsite. A foundry sends back brain chips for cartbot upgrades.",
+          disabled: !canAfford(TRADE_SHIPMENTS.brainChip.cost),
+          onClick: () => queueBrainShipment(base),
+        }),
+        commandButton({
+          label: "Cancel Export",
+          icon: "C",
+          color: "#ffcf67",
+          cost: null,
+          tip: "Cancel the newest export shipment and return its resources.",
+          disabled: !base.queue.some((item) => item.type === "brainShipment"),
+          onClick: () => cancelQueuedBrainShipment(base),
         }),
       );
       return;
     }
 
     if (hasUnit) {
+      const brainCost = selectedBrainUpgradeCost();
       ui.actionGrid.append(
         commandButton({
           label: "Attack",
@@ -2793,6 +2961,15 @@
           disabled: !canAfford(BUILDING_TYPES.batteryBank.cost),
           active: state.commandMode === "buildBattery",
           onClick: () => setCommandMode("buildBattery"),
+        }),
+        commandButton({
+          label: "Install Brain",
+          icon: "I",
+          color: "#91a7ff",
+          cost: brainCost,
+          tip: brainCost ? "Install the next imported brain tier into all selected cartbots." : "Selected cartbots are already at the best brain tier.",
+          disabled: !brainCost || !canAfford(brainCost),
+          onClick: upgradeSelectedBrains,
         }),
       );
       return;
@@ -2844,8 +3021,10 @@
       const entity = selection[0];
       if (entity.kind === "unit") {
         appendHealthRow("Hull", entity.hp, entity.maxHp);
-        appendDetailRow("Brain", unitStateText(entity));
-        appendDetailRow("Carry", entity.carried ? `${entity.carried.amount} ${RESOURCE_TYPES[entity.carried.type].carryLabel}` : "Empty");
+        appendDetailRow("Brain", BRAIN_TIERS[entity.brainTier || 0].label);
+        appendDetailRow("Order", unitStateText(entity));
+        appendDetailRow("Move", `${Math.round(unitSpeed(entity))}/s`);
+        appendDetailRow("Carry", entity.carried ? `${entity.carried.amount}/${unitCarryCapacity(entity)} ${RESOURCE_TYPES[entity.carried.type].carryLabel}` : `Empty / ${unitCarryCapacity(entity)}`);
         appendDetailRow("Build Queue", buildQueueCount(entity) ? `${buildQueueCount(entity)} structure${buildQueueCount(entity) === 1 ? "" : "s"}` : "Empty");
         return;
       }
@@ -2861,7 +3040,7 @@
         if (entity.queue.length) {
           entity.queue.forEach((item, index) => {
             const pct = index === 0 ? 1 - item.remaining / item.total : 0;
-            appendMeterRow(index === 0 ? "Building" : `Queued ${index + 1}`, "Cartbot", pct, "#ffcf67");
+            appendMeterRow(index === 0 ? "Building" : `Queued ${index + 1}`, queueItemLabel(item), pct, item.type === "brainShipment" ? "#91a7ff" : "#ffcf67");
           });
         } else {
           appendDetailRow("Queue", "Empty");
@@ -2954,6 +3133,7 @@
     const parts = [];
     if (cost.ore) parts.push(`${cost.ore} ore`);
     if (cost.wood) parts.push(`${cost.wood} lumber`);
+    if (cost.chips) parts.push(`${cost.chips} chip${cost.chips === 1 ? "" : "s"}`);
     return parts.join(" / ");
   }
 
