@@ -122,10 +122,11 @@ button {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .resource {
-  min-width: 92px;
+  min-width: 84px;
   height: 34px;
   display: flex;
   align-items: center;

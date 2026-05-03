@@ -45,6 +45,17 @@ async function run() {
     await page.waitForSelector("#miniMap");
     await page.waitForTimeout(700);
     assert(errors.length === 0, `Console/page errors: ${errors.join(" | ")}`);
+    assert(await page.locator("#chipValue").count(), "Brain chip HUD value is missing.");
+
+    await page.mouse.click(550, 345);
+    await page.waitForTimeout(150);
+    const baseCommands = await page.locator("#actionGrid").textContent();
+    assert(/Export Goods/.test(baseCommands || ""), "Main base is missing Export Goods command.");
+
+    await page.mouse.click(725, 340);
+    await page.waitForTimeout(150);
+    const unitCommands = await page.locator("#actionGrid").textContent();
+    assert(/Install Brain/.test(unitCommands || ""), "Cartbot is missing Install Brain command.");
 
     const mini = await page.locator("#miniMap").boundingBox();
     const bottom = await page.locator("#bottomHud").boundingBox();

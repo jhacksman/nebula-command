@@ -1955,7 +1955,26 @@
 
     if (base.queue.length) {
       const item = base.queue[0];
-      drawBar(0, -112, 112, 8, 1 - item.remaining / item.total, "#ffcf67");
+      drawBar(0, -112, 112, 8, 1 - item.remaining / item.total, item.type === "brainShipment" ? "#91a7ff" : "#ffcf67");
+      if (item.type === "brainShipment") {
+        ctx.save();
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = "#91a7ff";
+        ctx.fillStyle = "#111820";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(72, -88, 18, Math.PI * 0.18, Math.PI * 1.82);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(72, -70);
+        ctx.lineTo(72, -42);
+        ctx.stroke();
+        ctx.fillStyle = "#91a7ff";
+        ctx.beginPath();
+        ctx.arc(72, -88, 5 + Math.sin(state.elapsed * 8) * 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
     }
 
     ctx.restore();
@@ -2983,6 +3002,11 @@
     ui.actionGrid.append(empty);
   }
 
+  function selectedMainBase() {
+    const selection = selectedEntities();
+    return selection.length === 1 && selection[0].kind === "building" && selection[0].type === "mainBase" ? selection[0] : null;
+  }
+
   function commandButton(options) {
     const button = document.createElement("button");
     button.type = "button";
@@ -3332,6 +3356,15 @@
     }
     if (key === "b") {
       setCommandMode("buildBattery");
+      return;
+    }
+    if (key === "t") {
+      const base = selectedMainBase();
+      if (base) queueBrainShipment(base);
+      return;
+    }
+    if (key === "i") {
+      if (selectedUnits().length) upgradeSelectedBrains();
       return;
     }
 
