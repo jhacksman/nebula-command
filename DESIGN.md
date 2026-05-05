@@ -62,6 +62,65 @@ The player fantasy is not just "I command units." It is:
 
 > I bootstrap an outpost into an industrial war machine.
 
+## Full-Game Progression Slice
+
+The v1 full-game path is a free browser RTS with mission-based solo rounds and optional cloud save. It stays static-hostable on GitHub Pages: no custom backend, no SaaS dependency, and local play works without logging in.
+
+First complete mission type: Total Domination.
+
+- Start in Mission Control, then launch a solo Total Domination run.
+- Land with one main base, starter resources, and one cartbot.
+- Build the cartbot economy, export resources for brain chips, and expand worker capacity with Battery Banks.
+- Destroy all enemy bases to win.
+- Lose if the main base is destroyed or the player has no practical production/recovery path.
+- Return to Mission Control, review time, enemies defeated, resources exported, cartbots lost, and points earned.
+- Spend campaign points on bounded solo upgrades that help weaker players grind forward without erasing mission design.
+
+Permanent solo upgrades are deliberately modest:
+
+- Starter ore, lumber, and brain chips.
+- Starter cartbot brain cap.
+- Slight gather, carry, build, and base queue speed bonuses.
+- Mission scanner bonuses that point toward richer nodes and enemy base direction.
+
+PvP later should ignore solo permanent stat bonuses by default. The solo campaign can be a progression toy; mirrored multiplayer should be fair unless a future match option explicitly enables asymmetry.
+
+## Resource Lifecycle
+
+Resource nodes now have durability and regeneration instead of being tiny disposable piles.
+
+- Every starting node amount is multiplied by 10 from the original prototype values.
+- When a node reaches 0, it is marked exhausted and cannot be gathered.
+- After 30 minutes of active in-mission time, it regenerates at half of its previous capacity.
+- The halving repeats indefinitely with a floor of 1.
+- Type, composition, and hex are preserved; only amount/capacity changes.
+
+This keeps early mining consistent while still making exhausted local resources strategically meaningful.
+
+## Cloud Save Direction
+
+Cloud save should remain optional and static-only.
+
+- Local storage remains the offline source of truth when logged out.
+- Google Identity Services provides sign-in.
+- Google Drive `appDataFolder` stores one JSON save file named `nebula-command-save-v1.json`.
+- The save object contains mission state, solo meta progression, resources, units, buildings, camera, and control groups.
+- Newer `updatedAt` wins on sync, with a visible local-newer/cloud-newer prompt before overwriting.
+
+The committed `src/config.js` intentionally leaves `googleClientId` blank. A real Google OAuth web client ID can be added for hosted cloud sync without changing the static architecture.
+
+## Intrusion Brain Cyberwarfare
+
+The highest current cartbot brain tier is the Intrusion Brain.
+
+- Solo-only first pass.
+- A ready Intrusion cartbot can tether-control one lower-brain enemy cartbot.
+- The hack channels at range, then captures the target and draws a visible tether.
+- One hacker controls one target at a time.
+- Equal-or-higher brain tiers and Firewall protection block hacking.
+- Captured cartbots release if the hacker dies or the mission ends.
+- Future PvP should exclude this by default unless every player has mirrored access.
+
 ## Goal
 
 Build a clean browser RTS foundation before adding armies, aliens, bugs, ships, full tech trees, or spectacle.
@@ -75,15 +134,19 @@ The first version should feel like the opening minute of a classic RTS:
 5. The base can queue more cartbots.
 6. Selection and basic commands behave the way RTS players expect.
 
-No ships in this pass. No squads. No enemies. No alien dynamics. Training dummies are allowed as passive test targets so worker attack/recon commands can be verified without turning the game into a combat sandbox.
+No ships in this pass. No squads. No alien dynamics. Enemy bases and enemy cartbots now exist only as the first solo Total Domination objective; training dummies remain as passive test targets for worker combat commands.
 
 ## Current Playable Version
 
-The current browser demo is the worker-management slice.
+The current browser demo is the first solo mission slice.
 
-- Start on Earth with one landed main base, 50 ore, and one deployed cartbot.
+- Start in Mission Control, launch Total Domination, then land on Earth with one main base, starter resources, and one deployed cartbot.
+- Enemy main bases and enemy cartbots exist on the far side of the map. Destroying every enemy base wins the mission; losing the main base or recovery path fails it.
+- Post-mission stats award campaign points that persist in local storage and can be spent on solo upgrades.
+- Optional Google Drive cloud sync is scaffolded through Google Identity Services and Drive `appDataFolder`; local-only play remains fully supported.
 - The map uses a hex tile system: the main base occupies a multi-hex footprint, each resource node occupies one hex, and each training dummy occupies one hex.
 - Cartbots gather ore or lumber, return to the main base, deposit, then loop until redirected or the node empties.
+- Resource nodes start at 10x the old prototype amounts, exhaust at 0, and regenerate after 30 active mission minutes at half their previous capacity.
 - Resource nodes are inspectable and expose early survey composition percentages such as iron, copper, silica, cellulose, carbon, resin, and trace material.
 - The command panel shows selected-object details: cartbot brain/order state, base queue progress, resource composition and assignment count, or dummy HP.
 - The bottom HUD tracks worker assignment counts: idle, ore, lumber, returning, building, recon, and combat.
@@ -97,6 +160,7 @@ The current browser demo is the worker-management slice.
 - Battery Banks are the first worker-built structure: 1 hex, 150 HP, 75 ore / 25 lumber, 10 second build time, invalid on occupied static hexes.
 - Cartbots can queue multiple build jobs and complete them in order.
 - Right-clicking an unfinished worker-built structure with a Cartbot selected resumes construction from its existing progress.
+- Brain chips now reach a top Intrusion Brain tier. One max-tier cartbot can tether-control one lower-brain enemy cartbot in solo play.
 
 ## Long-Term Game Shape
 

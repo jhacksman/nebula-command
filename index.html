@@ -71,15 +71,52 @@
 
       <div id="tooltip" role="tooltip"></div>
       <div id="placementHint" class="hud-panel hidden">Place structure</div>
+      <section id="missionControl" class="mission-control" aria-label="Mission Control">
+        <div class="mission-shell">
+          <div class="mission-header">
+            <div>
+              <span class="mission-kicker">Atlas Mission Control</span>
+              <h1>Nebula Command</h1>
+              <p>Total Domination contracts fund permanent solo campaign upgrades. No account required; Google sync is optional.</p>
+            </div>
+            <div class="sync-card">
+              <strong>Cloud Sync</strong>
+              <span id="syncStatus">Local save only</span>
+              <button id="googleSignInButton" type="button">Connect Google Drive</button>
+              <button id="googleSyncButton" type="button">Sync Save</button>
+            </div>
+          </div>
+
+          <div class="mission-grid">
+            <section class="mission-card">
+              <h2>Total Domination</h2>
+              <p>Land the base, expand the cartbot economy, and destroy every enemy base.</p>
+              <div id="missionStats" class="stat-grid"></div>
+              <div class="mission-actions">
+                <button id="startMissionButton" type="button">Start Mission</button>
+                <button id="continueMissionButton" type="button">Continue Mission</button>
+              </div>
+            </section>
+
+            <section class="mission-card">
+              <h2>Solo Upgrades</h2>
+              <p>Spend campaign points on modest starter and efficiency bonuses.</p>
+              <div id="upgradeGrid" class="upgrade-grid"></div>
+            </section>
+          </div>
+        </div>
+      </section>
       <div id="endOverlay" class="hidden">
         <div>
           <h1 id="endTitle">Reset</h1>
           <p id="endText">Start the economy slice again.</p>
-          <button id="restartButton" type="button">Restart</button>
+          <button id="restartButton" type="button">Return to Mission Control</button>
         </div>
       </div>
     </main>
 
+    <script src="src/config.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="src/game.js" defer></script>
   </body>
 </html>

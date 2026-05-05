@@ -42,10 +42,20 @@ async function run() {
     page.on("pageerror", (error) => errors.push(error.message));
 
     await page.goto(baseUrl);
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await page.waitForSelector("#missionControl:not(.hidden)");
+    const missionText = await page.locator("#missionControl").textContent();
+    assert(/Total Domination/.test(missionText || ""), "Mission Control did not render Total Domination.");
+    await page.click("#startMissionButton");
+    await page.waitForFunction(() => document.getElementById("missionControl")?.classList.contains("hidden"));
     await page.waitForSelector("#miniMap");
     await page.waitForTimeout(700);
     assert(errors.length === 0, `Console/page errors: ${errors.join(" | ")}`);
     assert(await page.locator("#chipValue").count(), "Brain chip HUD value is missing.");
+    const savedAfterStart = await page.evaluate(() => JSON.parse(localStorage.getItem("nebula-command-save-v1")));
+    assert(savedAfterStart.version === 2, "Autosave did not migrate to save version 2.");
+    assert(savedAfterStart.nodes.some((node) => node.amount >= 9000), "Resource nodes were not scaled up 10x.");
 
     await page.mouse.click(550, 345);
     await page.waitForTimeout(150);
@@ -62,29 +72,30 @@ async function run() {
     const bottom = await page.locator("#bottomHud").boundingBox();
     assert(mini && bottom, "Expected minimap and bottom HUD boxes.");
 
-    const miniData = () => page.$eval("#miniMap", (canvas) => canvas.toDataURL());
+    const cameraData = () => page.evaluate(() => window.nebulaDebug.camera());
+    const sameCamera = (a, b) => Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 0.01 && Math.abs(a.zoom - b.zoom) < 0.0001;
 
     await page.mouse.move(520, bottom.y - 25);
     await page.waitForTimeout(300);
     await page.mouse.move(mini.x + mini.width / 2, mini.y + mini.height / 2);
     await page.waitForTimeout(120);
-    const afterMiniEnter = await miniData();
+    const afterMiniEnter = await cameraData();
     await page.waitForTimeout(850);
-    const afterMiniHold = await miniData();
-    assert(afterMiniEnter === afterMiniHold, "Camera changed while hovering minimap/bottom HUD.");
+    const afterMiniHold = await cameraData();
+    assert(sameCamera(afterMiniEnter, afterMiniHold), "Camera changed while hovering minimap/bottom HUD.");
 
     await page.mouse.wheel(0, -700);
     await page.waitForTimeout(250);
-    const afterMiniWheel = await miniData();
-    assert(afterMiniWheel === afterMiniHold, "Wheel over minimap changed the battlefield camera.");
+    const afterMiniWheel = await cameraData();
+    assert(sameCamera(afterMiniWheel, afterMiniHold), "Wheel over minimap changed the battlefield camera.");
 
     await page.mouse.move(430, 320);
     await page.waitForTimeout(80);
-    const beforeZoom = await miniData();
+    const beforeZoom = await cameraData();
     await page.mouse.wheel(0, -700);
     await page.waitForTimeout(250);
-    const afterZoom = await miniData();
-    assert(beforeZoom !== afterZoom, "Wheel over battlefield did not change the viewport.");
+    const afterZoom = await cameraData();
+    assert(!sameCamera(beforeZoom, afterZoom), "Wheel over battlefield did not change the viewport.");
 
     await page.keyboard.press("a");
     await page.mouse.click(560, 360);

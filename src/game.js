@@ -30,14 +30,34 @@
     reconBots: document.getElementById("reconBots"),
     attackBots: document.getElementById("attackBots"),
     groupStrip: document.getElementById("groupStrip"),
+    missionControl: document.getElementById("missionControl"),
+    missionStats: document.getElementById("missionStats"),
+    upgradeGrid: document.getElementById("upgradeGrid"),
+    startMission: document.getElementById("startMissionButton"),
+    continueMission: document.getElementById("continueMissionButton"),
+    googleSignIn: document.getElementById("googleSignInButton"),
+    googleSync: document.getElementById("googleSyncButton"),
+    syncStatus: document.getElementById("syncStatus"),
+    endOverlay: document.getElementById("endOverlay"),
+    endTitle: document.getElementById("endTitle"),
+    endText: document.getElementById("endText"),
+    restart: document.getElementById("restartButton"),
   };
 
-  const WORLD = { w: 3000, h: 2100 };
+  const WORLD = { w: 3600, h: 2600 };
   const HEX = { size: 54, originX: 72, originY: 62 };
   const SQRT3 = Math.sqrt(3);
+  const SAVE_VERSION = 2;
   const SAVE_KEY = "nebula-command-save-v1";
+  const DRIVE_SAVE_NAME = "nebula-command-save-v1.json";
+  const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
+  const RESOURCE_SCALE = 10;
+  const RESOURCE_REGEN_TIME = 30 * 60;
 
+  const OWNER_PLAYER = "player";
+  const OWNER_ENEMY = "enemy";
   const PLAYER = "#79e6c8";
+  const ENEMY = "#ff6a56";
   const ORE = "#66d8ff";
   const WOOD = "#d89d59";
   const DUMMY = "#efcf9a";
@@ -128,6 +148,17 @@
       buildMult: 1.45,
       carryBonus: 5,
     },
+    {
+      label: "Intrusion Brain",
+      short: "Intrusion",
+      cost: { chips: 4, ore: 80 },
+      speedMult: 1.34,
+      gatherMult: 0.78,
+      buildMult: 1.55,
+      carryBonus: 8,
+      canHack: true,
+      firewall: true,
+    },
   ];
 
   const BUILDING_TYPES = {
@@ -150,12 +181,43 @@
     },
   };
 
+  const META_UPGRADES = [
+    { id: "starterOre", label: "Starter Ore", max: 5, baseCost: 2, costStep: 2, description: "+50 ore at solo mission start." },
+    { id: "starterWood", label: "Starter Lumber", max: 5, baseCost: 2, costStep: 2, description: "+25 lumber at solo mission start." },
+    { id: "starterChips", label: "Starter Chips", max: 3, baseCost: 4, costStep: 3, description: "+1 brain chip at solo mission start." },
+    { id: "brainCap", label: "Starter Brain Cap", max: 2, baseCost: 5, costStep: 4, description: "First cartbot lands with a better starter brain." },
+    { id: "gather", label: "Gather Calibration", max: 5, baseCost: 3, costStep: 3, description: "+4% gather speed per level." },
+    { id: "carry", label: "Cartbot Cargo", max: 5, baseCost: 3, costStep: 3, description: "+2 carry per level." },
+    { id: "build", label: "Builder Rig", max: 5, baseCost: 3, costStep: 3, description: "+8% build speed per level." },
+    { id: "queue", label: "Queue Firmware", max: 4, baseCost: 4, costStep: 3, description: "+8% base fabrication speed per level." },
+    { id: "scanner", label: "Mission Scanner", max: 3, baseCost: 3, costStep: 2, description: "Pings enemy direction and richer deposits." },
+  ];
+
+  const DEFAULT_META_UPGRADES = META_UPGRADES.reduce((map, upgrade) => {
+    map[upgrade.id] = 0;
+    return map;
+  }, {});
+
+  const GOOGLE_CONFIG = window.NEBULA_CONFIG || {};
+
   const state = {
-    resources: { ore: 50, wood: 0, chips: 0 },
+    screen: "missionControl",
+    resources: { ore: 0, wood: 0, chips: 0 },
     units: [],
     buildings: [],
     nodes: [],
     dummies: [],
+    mission: null,
+    meta: createDefaultMeta(),
+    google: {
+      accessToken: null,
+      tokenClient: null,
+      saveFileId: null,
+      signedIn: false,
+      status: "Local save only",
+      busy: false,
+    },
+    lastSaveUpdatedAt: new Date().toISOString(),
     selectedIds: new Set(),
     controlGroups: new Map(),
     nextId: 1,
@@ -188,6 +250,42 @@
     hitFlashes: [],
     miniMapPings: [],
   };
+
+  function createDefaultMeta() {
+    return {
+      points: 0,
+      totalPoints: 0,
+      upgrades: { ...DEFAULT_META_UPGRADES },
+      stats: {
+        missions: 0,
+        victories: 0,
+        defeats: 0,
+        enemiesDefeated: 0,
+        resourcesExported: 0,
+        cartbotsLost: 0,
+        bestTime: null,
+        lastRun: null,
+      },
+    };
+  }
+
+  function createMission(type = "totalDomination") {
+    return {
+      type,
+      mode: "solo",
+      status: "active",
+      elapsed: 0,
+      startedAt: new Date().toISOString(),
+      endedAt: null,
+      result: null,
+      pointsEarned: 0,
+      stats: {
+        enemiesDefeated: 0,
+        resourcesExported: 0,
+        cartbotsLost: 0,
+      },
+    };
+  }
 
   function clamp(n, min, max) {
     return Math.max(min, Math.min(max, n));
@@ -474,11 +572,31 @@
   }
 
   function selectedUnits() {
-    return state.units.filter((unit) => state.selectedIds.has(unit.id));
+    return state.units.filter((unit) => state.selectedIds.has(unit.id) && unit.owner === OWNER_PLAYER);
   }
 
   function getEntity(id) {
     return allSelectable().find((entity) => entity.id === id) || null;
+  }
+
+  function playerUnits() {
+    return state.units.filter((unit) => unit.owner === OWNER_PLAYER);
+  }
+
+  function enemyUnits() {
+    return state.units.filter((unit) => unit.owner === OWNER_ENEMY);
+  }
+
+  function playerBuildings() {
+    return state.buildings.filter((building) => building.owner === OWNER_PLAYER);
+  }
+
+  function enemyBuildings() {
+    return state.buildings.filter((building) => building.owner === OWNER_ENEMY);
+  }
+
+  function hostileTo(entity, other) {
+    return Boolean(entity && other && entity.owner && other.owner && entity.owner !== other.owner);
   }
 
   function getBuilding(id) {
@@ -493,8 +611,8 @@
     return state.dummies.find((dummy) => dummy.id === id) || null;
   }
 
-  function nearestDropoff() {
-    return state.buildings.find((building) => building.type === "mainBase") || null;
+  function nearestDropoff(owner = OWNER_PLAYER) {
+    return state.buildings.find((building) => building.type === "mainBase" && building.owner === owner && building.hp > 0) || null;
   }
 
   function announce(text) {
@@ -530,7 +648,26 @@
   }
 
   function init() {
-    state.resources = { ore: 50, wood: 0, chips: 0 };
+    resetWorldState();
+
+    if (!loadSavedGame()) {
+      state.screen = "missionControl";
+      state.meta = createDefaultMeta();
+      state.mission = null;
+      announce("Mission Control online. Start a Total Domination run when ready.");
+    }
+
+    if (state.screen === "mission" && state.mission?.status === "active") showMissionScreen();
+    else showMissionControl();
+
+    updateMouseWorld();
+    refreshUi();
+    renderMissionControl();
+    updateSyncStatus();
+  }
+
+  function resetWorldState() {
+    state.resources = { ore: 0, wood: 0, chips: 0 };
     state.units = [];
     state.buildings = [];
     state.nodes = [];
@@ -550,19 +687,43 @@
     state.hudTimer = 0;
     state.saveTimer = 4;
     state.lastClick = { time: 0, x: 0, y: 0, type: "", kind: "" };
+  }
 
-    if (loadSavedGame()) {
-      updateMouseWorld();
-      refreshUi();
-      return;
-    }
+  function startTotalDominationMission() {
+    resetWorldState();
+    state.screen = "mission";
+    state.mission = createMission("totalDomination");
+    state.resources = missionStartingResources();
 
     const base = addBuildingAtHex("mainBase", 4, 4);
     setGroundRally(base, axialToWorld(6, 4), false);
 
-    const bot = addUnit("peon", axialToWorld(6, 4).x, axialToWorld(6, 4).y);
+    const bot = addUnit("peon", axialToWorld(6, 4).x, axialToWorld(6, 4).y, {
+      brainTier: clamp(metaLevel("brainCap"), 0, 2),
+    });
     bot.angle = -0.35;
 
+    setupEarthResourceNodes();
+    setupTrainingDummies();
+    setupEnemyOutposts();
+
+    state.selectedIds.add(bot.id);
+    showMissionScreen();
+    announce("Base landed. Total Domination contract active.");
+    updateMouseWorld();
+    refreshUi();
+    saveGame();
+  }
+
+  function missionStartingResources() {
+    return {
+      ore: 50 + metaLevel("starterOre") * 50,
+      wood: metaLevel("starterWood") * 25,
+      chips: metaLevel("starterChips"),
+    };
+  }
+
+  function setupEarthResourceNodes() {
     addResourceNodeAtHex("ore", 0, 3, 900, {
       name: "Hematite Ridge",
       composition: { iron: 74, copper: 8, silica: 12, trace: 6 },
@@ -635,23 +796,173 @@
       name: "Southern Lumber Patch",
       composition: { cellulose: 64, carbon: 20, resin: 12, water: 4 },
     });
+    addResourceNodeAtHex("ore", 28, 4, 1700, {
+      name: "Titanium Iron Cap",
+      composition: { iron: 45, titanium: 31, silica: 16, trace: 8 },
+    });
+    addResourceNodeAtHex("wood", 31, 7, 1600, {
+      name: "Highland Fiber Grove",
+      composition: { cellulose: 70, carbon: 17, resin: 8, water: 5 },
+    });
+    addResourceNodeAtHex("ore", 26, 18, 1750, {
+      name: "Cobalt Copper Seam",
+      composition: { copper: 38, cobalt: 27, iron: 24, trace: 11 },
+    });
+    addResourceNodeAtHex("wood", 29, 21, 1700, {
+      name: "Redwood Windbreak",
+      composition: { cellulose: 66, carbon: 25, resin: 6, water: 3 },
+    });
+    addResourceNodeAtHex("ore", 11, 25, 1550, {
+      name: "Southern Rare Metal Fan",
+      composition: { iron: 33, copper: 21, rare: 28, trace: 18 },
+    });
+    addResourceNodeAtHex("wood", 5, 23, 1400, {
+      name: "Floodplain Timber",
+      composition: { cellulose: 54, carbon: 18, resin: 8, water: 20 },
+    });
+  }
 
+  function setupTrainingDummies() {
     addTrainingDummyAtHex(8, 5);
     addTrainingDummyAtHex(10, 4);
     addTrainingDummyAtHex(10, 6);
+  }
 
-    state.selectedIds.add(bot.id);
-    announce("Base landed. Cartbot brain online.");
-    updateMouseWorld();
+  function setupEnemyOutposts() {
+    const outposts = [
+      { q: 28, r: 8, bots: 3, brainTier: 1 },
+      { q: 23, r: 19, bots: 4, brainTier: 2 },
+    ];
+    for (const outpost of outposts) {
+      const base = addBuildingAtHex("mainBase", outpost.q, outpost.r, {
+        owner: OWNER_ENEMY,
+        spawnTimer: 18 + Math.random() * 8,
+      });
+      const spawnHexes = [
+        { q: 2, r: 0 },
+        { q: 1, r: 1 },
+        { q: -1, r: 2 },
+        { q: -2, r: 1 },
+      ].map((offset) => axialAdd(base.hex, offset));
+      for (let i = 0; i < outpost.bots; i += 1) {
+        const hex = nearestWalkableHex(spawnHexes[i % spawnHexes.length], base.hex);
+        const p = axialToWorld(hex.q, hex.r);
+        const bot = addUnit("peon", p.x, p.y, {
+          owner: OWNER_ENEMY,
+          brainTier: outpost.brainTier,
+        });
+        bot.angle = Math.atan2(p.y - base.y, p.x - base.x);
+      }
+    }
+  }
+
+  function showMissionControl() {
+    state.screen = "missionControl";
+    ui.missionControl.classList.remove("hidden");
+    ui.endOverlay.classList.add("hidden");
+    renderMissionControl();
+  }
+
+  function showMissionScreen() {
+    state.screen = "mission";
+    ui.missionControl.classList.add("hidden");
+    ui.endOverlay.classList.add("hidden");
     refreshUi();
   }
 
-  function addUnit(type, x, y) {
+  function continueMission() {
+    if (state.mission?.status === "active") {
+      showMissionScreen();
+      announce("Mission resumed.");
+      return;
+    }
+    startTotalDominationMission();
+  }
+
+  function returnToMissionControl() {
+    showMissionControl();
+    saveGame();
+  }
+
+  function renderMissionControl() {
+    if (!ui.missionStats || !ui.upgradeGrid) return;
+    const meta = state.meta || createDefaultMeta();
+    const last = meta.stats.lastRun;
+    ui.missionStats.innerHTML = "";
+    ui.missionStats.append(
+      statTile("Campaign Points", meta.points),
+      statTile("Victories", meta.stats.victories),
+      statTile("Enemies Defeated", meta.stats.enemiesDefeated),
+      statTile("Best Time", meta.stats.bestTime ? formatTime(meta.stats.bestTime) : "-"),
+      statTile("Last Run", last ? `${last.result} / ${last.pointsEarned} pts` : "No run yet"),
+      statTile("Cloud", state.google.signedIn ? "Connected" : "Local"),
+    );
+
+    ui.continueMission.disabled = !(state.mission?.status === "active");
+    ui.upgradeGrid.innerHTML = "";
+    for (const upgrade of META_UPGRADES) {
+      const level = metaLevel(upgrade.id);
+      const maxed = level >= upgrade.max;
+      const cost = upgradeCost(upgrade, level);
+      const card = document.createElement("div");
+      card.className = "upgrade-card";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = maxed ? "Maxed" : `Buy ${cost} pts`;
+      button.disabled = maxed || meta.points < cost;
+      button.addEventListener("click", () => buyUpgrade(upgrade.id));
+      card.innerHTML = `<strong>${upgrade.label}</strong><span>Level ${level}/${upgrade.max}</span><p>${upgrade.description}</p>`;
+      card.append(button);
+      ui.upgradeGrid.append(card);
+    }
+  }
+
+  function statTile(label, value) {
+    const tile = document.createElement("div");
+    tile.className = "stat-tile";
+    tile.innerHTML = `<span>${label}</span><strong>${value}</strong>`;
+    return tile;
+  }
+
+  function metaLevel(id) {
+    return state.meta?.upgrades?.[id] || 0;
+  }
+
+  function upgradeCost(upgrade, level = metaLevel(upgrade.id)) {
+    return upgrade.baseCost + level * upgrade.costStep;
+  }
+
+  function buyUpgrade(id) {
+    const upgrade = META_UPGRADES.find((item) => item.id === id);
+    if (!upgrade) return;
+    const level = metaLevel(id);
+    if (level >= upgrade.max) return;
+    const cost = upgradeCost(upgrade, level);
+    if (state.meta.points < cost) {
+      announce("Need more campaign points.");
+      return;
+    }
+    state.meta.points -= cost;
+    state.meta.upgrades[id] = level + 1;
+    announce(`${upgrade.label} upgraded.`);
+    renderMissionControl();
+    saveGame();
+  }
+
+  function formatTime(seconds) {
+    const total = Math.max(0, Math.floor(seconds));
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+  }
+
+  function addUnit(type, x, y, options = {}) {
     const def = UNIT_TYPES[type];
     const unit = {
       id: nextId(),
       kind: "unit",
       type,
+      owner: options.owner || OWNER_PLAYER,
       x,
       y,
       radius: def.radius,
@@ -663,7 +974,12 @@
       carried: null,
       gatherTimer: 0,
       attackTimer: 0,
-      brainTier: 0,
+      hackCooldown: options.hackCooldown || 0,
+      hackTargetId: null,
+      hackTimer: 0,
+      hackedBy: null,
+      originalOwner: null,
+      brainTier: options.brainTier || 0,
       anim: Math.random() * 10,
     };
     state.units.push(unit);
@@ -683,11 +999,13 @@
       hex,
       footprint: (def.footprint || [{ q: 0, r: 0 }]).map((offset) => axialAdd(hex, offset)),
       radius: def.radius,
+      owner: options.owner || OWNER_PLAYER,
       hp: options.hp ?? def.hp,
-      maxHp: def.hp,
+      maxHp: options.maxHp || def.hp,
       queue: [],
       rally: null,
       autoExport: false,
+      spawnTimer: options.spawnTimer || 0,
       build: options.build || null,
       underConstruction: Boolean(options.underConstruction),
     };
@@ -697,6 +1015,7 @@
 
   function addResourceNodeAtHex(type, q, r, amount, options = {}) {
     const center = axialToWorld(q, r);
+    const capacity = Math.max(1, Math.floor(amount * RESOURCE_SCALE));
     state.nodes.push({
       id: nextId(),
       kind: "resource",
@@ -707,8 +1026,12 @@
       y: center.y,
       hex: { q, r },
       radius: type === "ore" ? 34 : 42,
-      amount,
-      maxAmount: amount,
+      amount: capacity,
+      maxAmount: capacity,
+      regenCapacity: capacity,
+      exhausted: false,
+      regenTimer: 0,
+      depletionCount: 0,
       wobble: Math.random() * Math.PI * 2,
     });
   }
@@ -734,7 +1057,7 @@
   }
 
   function workerCapacity() {
-    return state.buildings.reduce((total, building) => {
+    return playerBuildings().reduce((total, building) => {
       const def = BUILDING_TYPES[building.type];
       if (!def?.capacity || building.underConstruction || building.hp <= 0) return total;
       return total + def.capacity;
@@ -742,11 +1065,11 @@
   }
 
   function queuedWorkers() {
-    return state.buildings.reduce((total, building) => total + building.queue.filter((item) => item.type === "peon").length, 0);
+    return playerBuildings().reduce((total, building) => total + building.queue.filter((item) => item.type === "peon").length, 0);
   }
 
   function usedWorkerCapacity() {
-    return state.units.length + queuedWorkers();
+    return playerUnits().length + queuedWorkers();
   }
 
   function hasWorkerCapacity(count = 1) {
@@ -828,6 +1151,10 @@
   function completeBrainShipment(base, item) {
     const reward = item.reward || TRADE_SHIPMENTS.brainChip.reward;
     state.resources.chips += reward.chips || 0;
+    if (state.mission?.stats) {
+      const cost = item.cost || TRADE_SHIPMENTS.brainChip.cost;
+      state.mission.stats.resourcesExported += (cost.ore || 0) + (cost.wood || 0);
+    }
     addMarker(base.x, base.y, "brain", "deposit");
     raiseWorldAlert(`${reward.chips || 1} brain chip${(reward.chips || 1) === 1 ? "" : "s"} delivered.`, base.x, base.y, "tech");
   }
@@ -923,7 +1250,7 @@
     if (!base.rally) return;
     if (base.rally.type === "resource") {
       const rallyNode = getNode(base.rally.nodeId);
-      const node = rallyNode?.amount > 0 ? rallyNode : nearestResourceNode(base.rally.resourceType, worldToAxial(unit.x, unit.y));
+      const node = rallyNode?.amount > 0 && !rallyNode.exhausted ? rallyNode : nearestResourceNode(base.rally.resourceType, worldToAxial(unit.x, unit.y));
       if (node) {
         setGatherOrder(unit, node);
         return;
@@ -943,35 +1270,69 @@
   }
 
   function unitGatherTime(unit) {
-    return UNIT_TYPES[unit.type].gatherTime * brainTier(unit).gatherMult;
+    const metaMult = unit.owner === OWNER_PLAYER && state.mission?.mode === "solo" ? Math.max(0.7, 1 - metaLevel("gather") * 0.04) : 1;
+    return UNIT_TYPES[unit.type].gatherTime * brainTier(unit).gatherMult * metaMult;
   }
 
   function unitCarryCapacity(unit) {
-    return UNIT_TYPES[unit.type].carry + brainTier(unit).carryBonus;
+    const metaCarry = unit.owner === OWNER_PLAYER && state.mission?.mode === "solo" ? metaLevel("carry") * 2 : 0;
+    return UNIT_TYPES[unit.type].carry + brainTier(unit).carryBonus + metaCarry;
   }
 
   function unitBuildRate(unit) {
-    return brainTier(unit).buildMult;
+    const metaBuild = unit.owner === OWNER_PLAYER && state.mission?.mode === "solo" ? 1 + metaLevel("build") * 0.08 : 1;
+    return brainTier(unit).buildMult * metaBuild;
+  }
+
+  function baseQueueRate(building) {
+    if (building.owner !== OWNER_PLAYER || state.mission?.mode !== "solo") return 1;
+    return 1 + metaLevel("queue") * 0.08;
   }
 
   function update(dt) {
     state.elapsed += dt;
+    if (state.screen !== "mission") {
+      updateMarkers(dt);
+      updateAlerts(dt);
+      updateAutosave(dt);
+      return;
+    }
+
+    if (state.mission?.status !== "active") {
+      updateMarkers(dt);
+      updateAlerts(dt);
+      syncHud(dt);
+      updateAutosave(dt);
+      return;
+    }
+
+    if (state.mission?.status === "active") state.mission.elapsed += dt;
     updateCamera(dt);
     updateUnits(dt);
+    updateHacking(dt);
     updateProduction(dt);
+    updateResourceRegen(dt);
     updateAutoExports();
+    updateEnemyAi(dt);
     applySeparation(dt);
     enforceStaticOccupancy();
     updateMarkers(dt);
     updateAlerts(dt);
-    removeDeadDummies();
+    removeDeadEntities();
+    checkMissionOutcome();
     syncHud(dt);
     updateAutosave(dt);
   }
 
-  function saveSnapshot() {
+  function saveSnapshot(options = {}) {
+    const updatedAt = options.preserveUpdatedAt && state.lastSaveUpdatedAt ? state.lastSaveUpdatedAt : new Date().toISOString();
+    state.lastSaveUpdatedAt = updatedAt;
     return {
-      version: 1,
+      version: SAVE_VERSION,
+      updatedAt,
+      screen: state.screen,
+      mission: state.mission,
+      meta: state.meta,
       resources: state.resources,
       units: state.units,
       buildings: state.buildings,
@@ -981,22 +1342,108 @@
       camera: state.camera,
       controlGroups: [...state.controlGroups.entries()],
       selectedIds: [...state.selectedIds],
+      cloud: {
+        saveFileId: state.google.saveFileId,
+      },
     };
   }
 
   function restoreSnapshot(snapshot) {
-    if (!snapshot || snapshot.version !== 1 || !Array.isArray(snapshot.units) || !Array.isArray(snapshot.buildings)) return false;
-    state.resources = { ore: 0, wood: 0, chips: 0, ...(snapshot.resources || {}) };
-    state.units = snapshot.units;
-    state.buildings = snapshot.buildings;
-    state.nodes = snapshot.nodes || [];
-    state.dummies = snapshot.dummies || [];
-    state.nextId = snapshot.nextId || 1;
-    state.camera = snapshot.camera || { x: 70, y: 35, zoom: Math.min(1, Math.max(0.68, innerWidth / 1320)) };
-    state.controlGroups = new Map(snapshot.controlGroups || []);
-    state.selectedIds = new Set((snapshot.selectedIds || []).filter((id) => allSelectable().some((entity) => entity.id === id)));
+    if (!snapshot || !Array.isArray(snapshot.units) || !Array.isArray(snapshot.buildings)) return false;
+    const migrated = migrateSnapshot(snapshot);
+    state.resources = migrated.resources;
+    state.screen = migrated.screen;
+    state.mission = migrated.mission;
+    state.meta = migrated.meta;
+    state.units = migrated.units;
+    state.buildings = migrated.buildings;
+    state.nodes = migrated.nodes;
+    state.dummies = migrated.dummies;
+    state.nextId = migrated.nextId;
+    state.camera = migrated.camera;
+    state.controlGroups = new Map(migrated.controlGroups || []);
+    state.selectedIds = new Set((migrated.selectedIds || []).filter((id) => allSelectable().some((entity) => entity.id === id)));
+    state.lastSaveUpdatedAt = migrated.updatedAt;
+    state.google.saveFileId = migrated.cloud?.saveFileId || state.google.saveFileId;
     announce("Saved colony restored.");
     return true;
+  }
+
+  function migrateSnapshot(snapshot) {
+    const fromVersion = snapshot.version || 1;
+    const meta = mergeMeta(snapshot.meta);
+    const mission = snapshot.mission || (fromVersion < 2 ? createMission("totalDomination") : null);
+    if (mission && !mission.stats) mission.stats = createMission(mission.type || "totalDomination").stats;
+    return {
+      version: SAVE_VERSION,
+      updatedAt: snapshot.updatedAt || new Date(0).toISOString(),
+      screen: snapshot.screen || (mission?.status === "active" ? "mission" : "missionControl"),
+      mission,
+      meta,
+      resources: { ore: 0, wood: 0, chips: 0, ...(snapshot.resources || {}) },
+      units: (snapshot.units || []).map((unit) => normalizeUnit(unit)),
+      buildings: (snapshot.buildings || []).map((building) => normalizeBuilding(building)),
+      nodes: (snapshot.nodes || []).map((node) => normalizeNode(node, fromVersion)),
+      dummies: snapshot.dummies || [],
+      nextId: snapshot.nextId || 1,
+      camera: snapshot.camera || { x: 70, y: 35, zoom: Math.min(1, Math.max(0.68, innerWidth / 1320)) },
+      controlGroups: snapshot.controlGroups || [],
+      selectedIds: snapshot.selectedIds || [],
+      cloud: snapshot.cloud || {},
+    };
+  }
+
+  function mergeMeta(meta) {
+    const base = createDefaultMeta();
+    if (!meta) return base;
+    return {
+      ...base,
+      ...meta,
+      upgrades: { ...base.upgrades, ...(meta.upgrades || {}) },
+      stats: { ...base.stats, ...(meta.stats || {}) },
+    };
+  }
+
+  function normalizeUnit(unit) {
+    return {
+      owner: OWNER_PLAYER,
+      hackCooldown: 0,
+      hackTargetId: null,
+      hackTimer: 0,
+      hackedBy: null,
+      originalOwner: null,
+      ...unit,
+      orderQueue: unit.orderQueue || [],
+      order: unit.order || { type: "idle" },
+      brainTier: unit.brainTier || 0,
+    };
+  }
+
+  function normalizeBuilding(building) {
+    return {
+      owner: OWNER_PLAYER,
+      queue: [],
+      rally: null,
+      autoExport: false,
+      spawnTimer: 0,
+      ...building,
+      maxHp: building.maxHp || BUILDING_TYPES[building.type]?.hp || building.hp || 1,
+    };
+  }
+
+  function normalizeNode(node, fromVersion) {
+    const scale = fromVersion < 2 && !node.regenCapacity ? RESOURCE_SCALE : 1;
+    const maxAmount = Math.max(1, Math.floor((node.maxAmount || node.amount || 1) * scale));
+    const amount = Math.max(0, Math.floor((node.amount || 0) * scale));
+    return {
+      ...node,
+      amount,
+      maxAmount,
+      regenCapacity: node.regenCapacity || maxAmount,
+      exhausted: Boolean(node.exhausted) || amount <= 0,
+      regenTimer: node.regenTimer || 0,
+      depletionCount: node.depletionCount || 0,
+    };
   }
 
   function loadSavedGame() {
@@ -1010,11 +1457,21 @@
     }
   }
 
-  function saveGame() {
+  function saveGame(options = {}) {
     try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify(saveSnapshot()));
+      localStorage.setItem(SAVE_KEY, JSON.stringify(saveSnapshot(options)));
     } catch (error) {
       console.warn("Save failed", error);
+    }
+  }
+
+  function readLocalSnapshot() {
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+      console.warn("Local save read failed", error);
+      return null;
     }
   }
 
@@ -1045,6 +1502,7 @@
       if (unit.order.type === "gather") updateGatherOrder(unit, dt);
       if (unit.order.type === "attack") updateAttackOrder(unit, dt);
       if (unit.order.type === "attackMove") updateAttackMoveOrder(unit, dt);
+      if (unit.order.type === "hack") updateHackOrder(unit, dt);
       if (unit.order.type === "recon") updateReconOrder(unit, dt);
       if (unit.order.type === "build") updateBuildOrder(unit, dt, activeBuilds);
     }
@@ -1116,6 +1574,7 @@
         return;
       }
       node.amount -= amount;
+      if (node.amount <= 0) depleteNode(node);
       unit.carried = { type: node.type, amount };
       unit.gatherTimer = 0;
       order.phase = "returning";
@@ -1145,14 +1604,18 @@
   }
 
   function updateAttackOrder(unit, dt) {
-    const target = getDummy(unit.order.targetId);
+    const target = getAttackTarget(unit, unit.order.targetId);
     if (!target || target.hp <= 0) {
       unit.order = { type: "idle" };
       return;
     }
     const def = UNIT_TYPES[unit.type];
     if (distance(unit, target) > def.attackRange + target.radius) {
-      if (!unit.order.path?.length) primeOrderPath(unit.order, worldToAxial(unit.x, unit.y), target.hex);
+      const targetHex = target.hex || worldToAxial(target.x, target.y);
+      if (!unit.order.path?.length || hexDistance(unit.order.targetHex || targetHex, targetHex) > 1) {
+        unit.order.targetHex = targetHex;
+        primeOrderPath(unit.order, worldToAxial(unit.x, unit.y), targetHex);
+      }
       followOrderPath(unit, unit.order, dt, def.attackRange + target.radius - 2);
       return;
     }
@@ -1168,12 +1631,12 @@
 
   function updateAttackMoveOrder(unit, dt) {
     const def = UNIT_TYPES[unit.type];
-    const target = nearestDummy(unit, def.acquireRange);
+    const target = nearestAttackTarget(unit, def.acquireRange);
     if (target) {
       unit.order = {
         type: "attack",
         targetId: target.id,
-        targetHex: target.hex,
+        targetHex: target.hex || worldToAxial(target.x, target.y),
         path: [],
         pathIndex: 0,
       };
@@ -1181,6 +1644,28 @@
     }
     if (!unit.order.path?.length) primeOrderPath(unit.order, worldToAxial(unit.x, unit.y), unit.order.targetHex);
     if (followOrderPath(unit, unit.order, dt, 8)) unit.order = { type: "idle" };
+  }
+
+  function updateHackOrder(unit, dt) {
+    const target = getEntity(unit.order.targetId);
+    if (!validHackTarget(unit, target)) {
+      unit.order = { type: "idle" };
+      return;
+    }
+    const range = 96;
+    if (distance(unit, target) > range) {
+      const targetHex = target.hex || worldToAxial(target.x, target.y);
+      if (!unit.order.path?.length || hexDistance(unit.order.targetHex || targetHex, targetHex) > 1) {
+        unit.order.targetHex = targetHex;
+        primeOrderPath(unit.order, worldToAxial(unit.x, unit.y), targetHex);
+      }
+      followOrderPath(unit, unit.order, dt, range - 4);
+      return;
+    }
+    unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    unit.order.channel = (unit.order.channel || 0) + dt;
+    if (unit.order.channel < 4.2) return;
+    captureHackTarget(unit, target);
   }
 
   function updateReconOrder(unit, dt) {
@@ -1230,7 +1715,7 @@
     for (const building of state.buildings) {
       if (!building.queue.length) continue;
       const item = building.queue[0];
-      item.remaining = Math.max(0, item.remaining - dt);
+      item.remaining = Math.max(0, item.remaining - dt * baseQueueRate(building));
       if (item.remaining <= 0) {
         building.queue.shift();
         if (item.type === "peon") spawnPeon(building, item.type);
@@ -1241,22 +1726,200 @@
   }
 
   function updateAutoExports() {
-    for (const base of state.buildings.filter((building) => building.type === "mainBase" && building.autoExport && building.hp > 0)) {
+    for (const base of state.buildings.filter((building) => building.type === "mainBase" && building.owner === OWNER_PLAYER && building.autoExport && building.hp > 0)) {
       if (base.queue.some((item) => item.type === "brainShipment")) continue;
       if (!canAfford(TRADE_SHIPMENTS.brainChip.cost)) continue;
       queueBrainShipment(base, "auto");
     }
   }
 
-  function removeDeadDummies() {
-    const dead = state.dummies.filter((dummy) => dummy.hp <= 0);
-    if (!dead.length) return;
-    for (const dummy of dead) state.selectedIds.delete(dummy.id);
-    state.dummies = state.dummies.filter((dummy) => dummy.hp > 0);
+  function depleteNode(node) {
+    if (node.exhausted) return;
+    const previousCapacity = node.regenCapacity || node.maxAmount || 1;
+    node.amount = 0;
+    node.exhausted = true;
+    node.regenTimer = RESOURCE_REGEN_TIME;
+    node.depletionCount = (node.depletionCount || 0) + 1;
+    node.regenCapacity = Math.max(1, Math.floor(previousCapacity / 2));
+    announce(`${node.name} exhausted. Survey shows slow regeneration.`);
+  }
+
+  function updateResourceRegen(dt) {
+    for (const node of state.nodes) {
+      if (!node.exhausted) continue;
+      node.regenTimer = Math.max(0, node.regenTimer - dt);
+      if (node.regenTimer > 0) continue;
+      node.maxAmount = Math.max(1, node.regenCapacity || Math.floor((node.maxAmount || 2) / 2));
+      node.amount = node.maxAmount;
+      node.exhausted = false;
+      addMarker(node.x, node.y, node.type, "deposit");
+      raiseWorldAlert(`${node.name} regenerated at reduced capacity.`, node.x, node.y, "resource");
+    }
+  }
+
+  function updateHacking(dt) {
     for (const unit of state.units) {
-      if ((unit.order?.type === "attack" || unit.order?.type === "attackMove") && !getDummy(unit.order.targetId)) {
-        unit.order = { type: "idle" };
+      unit.hackCooldown = Math.max(0, (unit.hackCooldown || 0) - dt);
+      if (!unit.hackTargetId) continue;
+      const target = state.units.find((item) => item.id === unit.hackTargetId);
+      if (!target || target.hackedBy !== unit.id || unit.hp <= 0) releaseHack(unit);
+    }
+  }
+
+  function updateEnemyAi(dt) {
+    for (const base of enemyBuildings().filter((building) => building.type === "mainBase")) {
+      base.spawnTimer = Math.max(0, (base.spawnTimer || 0) - dt);
+      if (base.spawnTimer > 0) continue;
+      base.spawnTimer = 24 + Math.random() * 10;
+      if (enemyUnits().length >= 14) continue;
+      spawnEnemyCartbot(base);
+    }
+
+    for (const unit of enemyUnits()) {
+      if (unit.order?.type === "attack" && getAttackTarget(unit, unit.order.targetId)) continue;
+      const near = nearestPlayerTarget(unit, 210);
+      if (near) {
+        setAttackOrder(unit, near);
+        continue;
       }
+      if (!unit.order || unit.order.type === "idle") {
+        const target = nearestPlayerTarget(unit, Infinity);
+        if (target) setAttackMoveOrder(unit, target);
+      }
+    }
+  }
+
+  function spawnEnemyCartbot(base) {
+    const spawnHex = chooseAdjacentWalkableHex(base.hex, base.hex);
+    const p = axialToWorld(spawnHex.q, spawnHex.r);
+    const bot = addUnit("peon", p.x, p.y, {
+      owner: OWNER_ENEMY,
+      brainTier: Math.min(2, 1 + Math.floor((state.mission?.elapsed || 0) / 480)),
+    });
+    bot.angle = Math.atan2(p.y - base.y, p.x - base.x);
+    addMarker(bot.x, bot.y, "attack", "attack");
+  }
+
+  function nearestPlayerTarget(entity, maxRange) {
+    let best = null;
+    let bestD = maxRange;
+    for (const target of [...playerUnits(), ...playerBuildings()].filter((item) => item.hp > 0)) {
+      const d = distance(entity, target);
+      if (d < bestD) {
+        best = target;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  function checkMissionOutcome() {
+    if (state.mission?.status !== "active") return;
+    if (!enemyBuildings().some((building) => building.type === "mainBase")) {
+      endMission("victory");
+      return;
+    }
+    const base = nearestDropoff(OWNER_PLAYER);
+    if (!base) {
+      endMission("defeat");
+      return;
+    }
+    const hasQueuedBot = playerBuildings().some((building) => building.queue.some((item) => item.type === "peon"));
+    if (!playerUnits().length && !hasQueuedBot && (!canAfford(UNIT_TYPES.peon.cost) || !hasWorkerCapacity())) {
+      endMission("defeat");
+    }
+  }
+
+  function endMission(result) {
+    if (!state.mission || state.mission.status !== "active") return;
+    state.mission.status = "complete";
+    state.mission.result = result;
+    state.mission.endedAt = new Date().toISOString();
+    state.mission.pointsEarned = missionPoints(result);
+    for (const unit of state.units) {
+      if (unit.hackTargetId) releaseHack(unit);
+      if (unit.hackedBy) releaseHackedUnit(unit);
+    }
+
+    const meta = state.meta || createDefaultMeta();
+    meta.points += state.mission.pointsEarned;
+    meta.totalPoints += state.mission.pointsEarned;
+    meta.stats.missions += 1;
+    meta.stats.enemiesDefeated += state.mission.stats.enemiesDefeated;
+    meta.stats.resourcesExported += state.mission.stats.resourcesExported;
+    meta.stats.cartbotsLost += state.mission.stats.cartbotsLost;
+    if (result === "victory") {
+      meta.stats.victories += 1;
+      if (!meta.stats.bestTime || state.mission.elapsed < meta.stats.bestTime) meta.stats.bestTime = state.mission.elapsed;
+    } else {
+      meta.stats.defeats += 1;
+    }
+    meta.stats.lastRun = {
+      result: titleCase(result),
+      time: state.mission.elapsed,
+      enemiesDefeated: state.mission.stats.enemiesDefeated,
+      resourcesExported: state.mission.stats.resourcesExported,
+      cartbotsLost: state.mission.stats.cartbotsLost,
+      pointsEarned: state.mission.pointsEarned,
+    };
+    state.meta = meta;
+
+    ui.endTitle.textContent = result === "victory" ? "Total Domination Complete" : "Mission Failed";
+    ui.endText.textContent = `${formatTime(state.mission.elapsed)} elapsed. ${state.mission.stats.enemiesDefeated} enemies defeated. ${state.mission.stats.resourcesExported} resources exported. ${state.mission.stats.cartbotsLost} cartbots lost. ${state.mission.pointsEarned} campaign points earned.`;
+    ui.endOverlay.classList.remove("hidden");
+    announce(result === "victory" ? "Enemy bases eliminated." : "Command path lost.");
+    renderMissionControl();
+    saveGame();
+  }
+
+  function missionPoints(result) {
+    const stats = state.mission?.stats || {};
+    if (result === "victory") {
+      const timeBonus = Math.max(0, 6 - Math.floor((state.mission?.elapsed || 0) / 300));
+      return 8 + (stats.enemiesDefeated || 0) + Math.floor((stats.resourcesExported || 0) / 200) + timeBonus;
+    }
+    return Math.min(4, Math.floor((state.mission?.elapsed || 0) / 300));
+  }
+
+  function removeDeadEntities() {
+    const deadUnits = state.units.filter((unit) => unit.hp <= 0);
+    const deadBuildings = state.buildings.filter((building) => building.hp <= 0);
+    const deadDummies = state.dummies.filter((dummy) => dummy.hp <= 0);
+    if (!deadUnits.length && !deadBuildings.length && !deadDummies.length) return;
+
+    for (const unit of deadUnits) {
+      state.selectedIds.delete(unit.id);
+      if (unit.hackTargetId) releaseHack(unit);
+      if (unit.hackedBy) {
+        const hacker = state.units.find((item) => item.id === unit.hackedBy);
+        if (hacker) hacker.hackTargetId = null;
+      }
+      if (unit.owner === OWNER_ENEMY && state.mission?.stats) state.mission.stats.enemiesDefeated += 1;
+      if (unit.owner === OWNER_PLAYER && state.mission?.stats) state.mission.stats.cartbotsLost += 1;
+    }
+
+    for (const building of deadBuildings) {
+      state.selectedIds.delete(building.id);
+      if (building.owner === OWNER_ENEMY && state.mission?.stats) state.mission.stats.enemiesDefeated += 1;
+      const label = building.owner === OWNER_ENEMY ? "Enemy base destroyed." : `${BUILDING_TYPES[building.type].label} destroyed.`;
+      raiseWorldAlert(label, building.x, building.y, "combat");
+    }
+
+    for (const dummy of deadDummies) state.selectedIds.delete(dummy.id);
+
+    state.units = state.units.filter((unit) => unit.hp > 0);
+    state.buildings = state.buildings.filter((building) => building.hp > 0);
+    state.dummies = state.dummies.filter((dummy) => dummy.hp > 0);
+    state.controlGroups = new Map(
+      [...state.controlGroups.entries()]
+        .map(([n, ids]) => [n, ids.filter((id) => state.units.some((unit) => unit.id === id && unit.owner === OWNER_PLAYER))])
+        .filter(([, ids]) => ids.length),
+    );
+
+    for (const unit of state.units) {
+      if (unit.order?.type === "attack" && !getAttackTarget(unit, unit.order.targetId)) unit.order = { type: "idle" };
+      if (unit.order?.type === "hack" && !getAttackTarget(unit, unit.order.targetId)) unit.order = { type: "idle" };
+      if (unit.hackedBy && !state.units.some((hacker) => hacker.id === unit.hackedBy && hacker.hp > 0)) releaseHackedUnit(unit);
     }
     refreshUi();
   }
@@ -1279,13 +1942,26 @@
     if (state.alert.t <= 0) ui.alerts.textContent = modeStatusText();
   }
 
-  function nearestDummy(unit, maxRange) {
+  function getAttackTarget(unit, id) {
+    const target = getEntity(id);
+    if (!target || target.id === unit.id) return null;
+    if (target.kind === "dummy" && unit.owner === OWNER_PLAYER) return target;
+    return hostileTo(unit, target) ? target : null;
+  }
+
+  function attackTargets(unit) {
+    const targets = [...state.units, ...state.buildings].filter((entity) => entity.id !== unit.id && entity.hp > 0 && hostileTo(unit, entity));
+    if (unit.owner === OWNER_PLAYER) targets.push(...state.dummies.filter((dummy) => dummy.hp > 0));
+    return targets;
+  }
+
+  function nearestAttackTarget(unit, maxRange) {
     let best = null;
     let bestD = maxRange;
-    for (const dummy of state.dummies) {
-      const d = distance(unit, dummy);
+    for (const target of attackTargets(unit)) {
+      const d = distance(unit, target);
       if (d < bestD) {
-        best = dummy;
+        best = target;
         bestD = d;
       }
     }
@@ -1296,7 +1972,7 @@
     let best = null;
     let bestScore = Infinity;
     for (const node of state.nodes) {
-      if (node.type !== type || node.amount <= 0 || node.id === excludedId) continue;
+      if (node.type !== type || node.amount <= 0 || node.exhausted || node.id === excludedId) continue;
       const score = hexDistance(fromHex, node.hex);
       if (score < bestScore) {
         best = node;
@@ -1346,7 +2022,7 @@
   function setGatherOrder(unit, node) {
     clearOrderQueue(unit);
     const base = nearestDropoff();
-    if (!base) return;
+    if (!base || !node || node.amount <= 0 || node.exhausted) return;
     const fromHex = worldToAxial(unit.x, unit.y);
     const resourceApproachHex = chooseAdjacentWalkableHex(node.hex, fromHex);
     const dropoffHex = buildingDropoffHex(base, resourceApproachHex);
@@ -1381,6 +2057,74 @@
     primeOrderPath(order, fromHex, dummy.hex);
     unit.order = order;
     unit.gatherTimer = 0;
+  }
+
+  function setHackOrder(unit, target) {
+    clearOrderQueue(unit);
+    if (!validHackTarget(unit, target)) return false;
+    const fromHex = worldToAxial(unit.x, unit.y);
+    const targetHex = target.hex || worldToAxial(target.x, target.y);
+    const order = {
+      type: "hack",
+      targetId: target.id,
+      targetHex,
+      channel: 0,
+      path: [],
+      pathIndex: 0,
+    };
+    primeOrderPath(order, fromHex, targetHex);
+    unit.order = order;
+    unit.gatherTimer = 0;
+    return true;
+  }
+
+  function canHack(unit) {
+    return unit.owner === OWNER_PLAYER && brainTier(unit).canHack && (unit.hackCooldown || 0) <= 0;
+  }
+
+  function validHackTarget(hacker, target) {
+    if (!hacker || !target || target.kind !== "unit") return false;
+    if (!canHack(hacker)) return false;
+    if (target.owner !== OWNER_ENEMY) return false;
+    if ((target.brainTier || 0) >= (hacker.brainTier || 0)) return false;
+    if (brainTier(target).firewall) return false;
+    return true;
+  }
+
+  function captureHackTarget(hacker, target) {
+    releaseHack(hacker);
+    target.originalOwner = target.owner;
+    target.owner = OWNER_PLAYER;
+    target.hackedBy = hacker.id;
+    target.order = { type: "idle" };
+    target.orderQueue = [];
+    target.carried = null;
+    hacker.hackTargetId = target.id;
+    hacker.hackCooldown = 45;
+    hacker.order = { type: "idle" };
+    addMarker(target.x, target.y, "hack", "attack");
+    raiseWorldAlert("Intrusion Brain captured an enemy cartbot.", target.x, target.y, "tech");
+    refreshUi();
+  }
+
+  function releaseHack(hacker) {
+    if (!hacker?.hackTargetId) return;
+    const target = state.units.find((unit) => unit.id === hacker.hackTargetId);
+    if (target) releaseHackedUnit(target);
+    hacker.hackTargetId = null;
+  }
+
+  function releaseHackedUnit(unit) {
+    if (!unit?.hackedBy) return;
+    const hacker = state.units.find((item) => item.id === unit.hackedBy);
+    if (hacker) hacker.hackTargetId = null;
+    unit.owner = unit.originalOwner || OWNER_ENEMY;
+    unit.originalOwner = null;
+    unit.hackedBy = null;
+    unit.order = { type: "idle" };
+    unit.orderQueue = [];
+    if (unit.owner !== OWNER_PLAYER) state.selectedIds.delete(unit.id);
+    addMarker(unit.x, unit.y, "hack", "attack");
   }
 
   function setAttackMoveOrder(unit, point) {
@@ -1661,6 +2405,7 @@
     drawPlacementPreview();
     drawOrderMarkers();
     drawBuildings();
+    drawHackTethers();
     drawUnits();
     drawHitFlashes();
     drawHoverLabel();
@@ -1704,7 +2449,8 @@
   function drawOccupiedHexes() {
     const occupied = new Map();
     for (const building of state.buildings) {
-      for (const hex of building.footprint) occupied.set(axialKey(hex), { hex, color: HEX_OCCUPIED });
+      const color = building.owner === OWNER_ENEMY ? "rgba(255,106,86,0.1)" : HEX_OCCUPIED;
+      for (const hex of building.footprint) occupied.set(axialKey(hex), { hex, color });
     }
     for (const node of state.nodes) occupied.set(axialKey(node.hex), { hex: node.hex, color: node.type === "ore" ? "rgba(102,216,255,0.1)" : "rgba(216,157,89,0.11)" });
     for (const dummy of state.dummies) occupied.set(axialKey(dummy.hex), { hex: dummy.hex, color: HEX_BLOCKED });
@@ -1784,6 +2530,7 @@
     if (order.type === "attack" || order.type === "attackMove") return "#ff8a68";
     if (order.type === "recon") return "#ffcf67";
     if (order.type === "build") return "#91a7ff";
+    if (order.type === "hack") return "#c79bff";
     return PLAYER;
   }
 
@@ -1963,11 +2710,14 @@
 
   function drawMainBase(base) {
     const selected = state.selectedIds.has(base.id);
+    const ownerColor = base.owner === OWNER_ENEMY ? ENEMY : PLAYER;
+    const footprintFill = base.owner === OWNER_ENEMY ? "rgba(255,106,86,0.1)" : "rgba(121,230,200,0.06)";
+    const footprintSelected = base.owner === OWNER_ENEMY ? "rgba(255,106,86,0.18)" : "rgba(121,230,200,0.13)";
     ctx.save();
     for (const hex of base.footprint) {
       const p = axialToWorld(hex.q, hex.r);
-      ctx.fillStyle = selected ? "rgba(121,230,200,0.13)" : "rgba(121,230,200,0.06)";
-      ctx.strokeStyle = selected ? "rgba(121,230,200,0.52)" : "rgba(121,230,200,0.18)";
+      ctx.fillStyle = selected ? footprintSelected : footprintFill;
+      ctx.strokeStyle = selected ? ownerColor : base.owner === OWNER_ENEMY ? "rgba(255,106,86,0.35)" : "rgba(121,230,200,0.18)";
       ctx.lineWidth = selected ? 2 : 1;
       drawHex(p.x, p.y, HEX.size - 8);
       ctx.fill();
@@ -1979,7 +2729,7 @@
     ctx.translate(base.x, base.y);
 
     if (selected) {
-      ctx.strokeStyle = PLAYER;
+      ctx.strokeStyle = ownerColor;
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.ellipse(0, 22, 130, 72, 0, 0, Math.PI * 2);
@@ -1989,8 +2739,8 @@
     ctx.shadowColor = "rgba(0, 0, 0, 0.48)";
     ctx.shadowBlur = 20;
 
-    ctx.strokeStyle = "#8be8cc";
-    ctx.fillStyle = "#253531";
+    ctx.strokeStyle = base.owner === OWNER_ENEMY ? ENEMY : "#8be8cc";
+    ctx.fillStyle = base.owner === OWNER_ENEMY ? "#3a2523" : "#253531";
     ctx.lineWidth = 2;
     roundedRect(-98, -58, 196, 116, 12);
     ctx.fill();
@@ -2060,6 +2810,7 @@
     }
 
     ctx.restore();
+    drawBar(base.x, base.y + 96, 150, 8, base.hp / base.maxHp, ownerColor);
 
     if (selected && base.rally) {
       const rallyTarget = rallyPoint(base.rally, base.hex);
@@ -2140,8 +2891,27 @@
     for (const unit of [...state.units].sort((a, b) => a.y - b.y)) drawGathererBot(unit);
   }
 
+  function drawHackTethers() {
+    ctx.save();
+    ctx.setLineDash([10, 8]);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(199, 155, 255, 0.78)";
+    ctx.shadowColor = "rgba(199, 155, 255, 0.8)";
+    ctx.shadowBlur = 12;
+    for (const hacker of state.units.filter((unit) => unit.hackTargetId)) {
+      const target = state.units.find((unit) => unit.id === hacker.hackTargetId);
+      if (!target) continue;
+      ctx.beginPath();
+      ctx.moveTo(hacker.x, hacker.y);
+      ctx.lineTo(target.x, target.y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   function drawGathererBot(unit) {
     const selected = state.selectedIds.has(unit.id);
+    const ownerColor = unit.owner === OWNER_ENEMY ? ENEMY : unit.hackedBy ? "#c79bff" : PLAYER;
     const moving = unit.order?.type !== "idle";
     const wheelSpin = moving ? unit.anim * 8 : 0;
     const bob = Math.sin(unit.anim * 7) * (moving ? 0.75 : 0.25);
@@ -2149,7 +2919,7 @@
     ctx.translate(unit.x, unit.y + bob);
 
     if (selected) {
-      ctx.strokeStyle = PLAYER;
+      ctx.strokeStyle = ownerColor;
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.ellipse(0, 6, 34, 21, 0, 0, Math.PI * 2);
@@ -2179,7 +2949,7 @@
     ctx.fill();
     ctx.stroke();
 
-    ctx.strokeStyle = "rgba(65, 154, 255, 0.95)";
+    ctx.strokeStyle = unit.owner === OWNER_ENEMY ? "rgba(255, 106, 86, 0.95)" : "rgba(65, 154, 255, 0.95)";
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(-18, 25);
@@ -2414,6 +3184,7 @@
     if (type === "recon") return "#ffcf67";
     if (type === "build") return "#91a7ff";
     if (type === "brain") return "#91a7ff";
+    if (type === "hack") return "#c79bff";
     return PLAYER;
   }
 
@@ -2451,11 +3222,11 @@
       miniCtx.fillRect(dummy.x * sx - 1.5, dummy.y * sy - 1.5, 3, 3);
     }
     for (const building of state.buildings) {
-      miniCtx.fillStyle = PLAYER;
+      miniCtx.fillStyle = building.owner === OWNER_ENEMY ? ENEMY : PLAYER;
       miniCtx.fillRect(building.x * sx - 3, building.y * sy - 3, 6, 6);
     }
     for (const unit of state.units) {
-      miniCtx.fillStyle = "#f4f7f2";
+      miniCtx.fillStyle = unit.owner === OWNER_ENEMY ? ENEMY : unit.hackedBy ? "#c79bff" : "#f4f7f2";
       miniCtx.fillRect(unit.x * sx - 1.5, unit.y * sy - 1.5, 3, 3);
     }
 
@@ -2566,13 +3337,13 @@
 
   function selectSameVisibleType(entity) {
     state.selectedIds.clear();
-    if (entity.kind !== "unit") {
+    if (entity.kind !== "unit" || entity.owner !== OWNER_PLAYER) {
       state.selectedIds.add(entity.id);
       refreshUi();
       return;
     }
     for (const unit of state.units) {
-      if (unit.type === entity.type && isVisibleOnScreen(unit)) state.selectedIds.add(unit.id);
+      if (unit.owner === OWNER_PLAYER && unit.type === entity.type && isVisibleOnScreen(unit)) state.selectedIds.add(unit.id);
     }
     announce(`Selected visible ${UNIT_TYPES[entity.type].label}s.`);
     refreshUi();
@@ -2584,7 +3355,7 @@
     const top = Math.min(start.worldY, end.worldY);
     const bottom = Math.max(start.worldY, end.worldY);
 
-    const units = state.units.filter((unit) => unit.x >= left && unit.x <= right && unit.y >= top && unit.y <= bottom);
+    const units = state.units.filter((unit) => unit.owner === OWNER_PLAYER && unit.x >= left && unit.x <= right && unit.y >= top && unit.y <= bottom);
     const buildings = state.buildings.filter((building) => building.x >= left && building.x <= right && building.y >= top && building.y <= bottom);
     const dummies = state.dummies.filter((dummy) => dummy.x >= left && dummy.x <= right && dummy.y >= top && dummy.y <= bottom);
     const picked = units.length ? units : buildings.length ? buildings : dummies;
@@ -2602,7 +3373,7 @@
 
     if (units.length) {
       if (node) {
-        if (node.amount <= 0) {
+        if (node.amount <= 0 || node.exhausted) {
           announce("That resource is depleted.");
           return;
         }
@@ -2616,6 +3387,13 @@
         units.forEach((unit) => setAttackOrder(unit, entity));
         addMarker(entity.x, entity.y, "attack", "attack");
         raiseWorldAlert("Attack target assigned.", entity.x, entity.y, "combat");
+        return;
+      }
+
+      if (entity && entity.owner === OWNER_ENEMY) {
+        units.forEach((unit) => setAttackOrder(unit, entity));
+        addMarker(entity.x, entity.y, "attack", "attack");
+        raiseWorldAlert("Enemy target assigned.", entity.x, entity.y, "combat");
         return;
       }
 
@@ -2691,6 +3469,10 @@
         announce("Gather needs ore or lumber.");
         return;
       }
+      if (node.amount <= 0 || node.exhausted) {
+        announce("That resource is depleted.");
+        return;
+      }
       units.forEach((unit) => setGatherOrder(unit, node));
       addMarker(node.x, node.y, node.type, "gather");
       announce(`Gather route set: ${RESOURCE_TYPES[node.type].label} -> Main Base.`);
@@ -2701,7 +3483,7 @@
 
     if (state.commandMode === "attack") {
       const entity = findEntityAt(point);
-      if (entity?.kind === "dummy") {
+      if (entity?.kind === "dummy" || entity?.owner === OWNER_ENEMY) {
         units.forEach((unit) => setAttackOrder(unit, entity));
         addMarker(entity.x, entity.y, "attack", "attack");
         raiseWorldAlert("Attack target assigned.", entity.x, entity.y, "combat");
@@ -2725,6 +3507,21 @@
       });
       addMarker(point.x, point.y, "recon", "move");
       announce("Recon route assigned.");
+      state.commandMode = null;
+      refreshUi();
+      return;
+    }
+
+    if (state.commandMode === "hack") {
+      const entity = findEntityAt(point);
+      const hacker = units.find((unit) => validHackTarget(unit, entity));
+      if (!hacker) {
+        announce("Hack blocked. Need a ready Intrusion cartbot against a lower-brain enemy.");
+        return;
+      }
+      setHackOrder(hacker, entity);
+      addMarker(entity.x, entity.y, "hack", "attack");
+      raiseWorldAlert("Hack tether charging.", entity.x, entity.y, "tech");
       state.commandMode = null;
       refreshUi();
       return;
@@ -2755,7 +3552,7 @@
     const ids = state.controlGroups.get(n) || [];
     state.selectedIds.clear();
     for (const id of ids) {
-      if (state.units.some((unit) => unit.id === id)) state.selectedIds.add(id);
+      if (state.units.some((unit) => unit.id === id && unit.owner === OWNER_PLAYER)) state.selectedIds.add(id);
     }
     if (state.selectedIds.size) announce(`Group ${n} recalled.`);
     refreshUi();
@@ -2764,6 +3561,10 @@
   function setCommandMode(mode) {
     if (!selectedUnits().length) {
       announce("Select cartbots first.");
+      return;
+    }
+    if (mode === "hack" && !selectedUnits().some((unit) => canHack(unit))) {
+      announce("Need a ready Intrusion Brain cartbot.");
       return;
     }
     state.commandMode = state.commandMode === mode ? null : mode;
@@ -2776,6 +3577,7 @@
     if (state.commandMode === "gather") return "Gather: click ore or lumber.";
     if (state.commandMode === "recon") return "Recon: click route endpoint.";
     if (state.commandMode === "buildBattery") return "Build Battery: click an empty hex.";
+    if (state.commandMode === "hack") return "Hack: click a lower-brain enemy cartbot.";
     return "";
   }
 
@@ -2816,7 +3618,7 @@
 
     const entity = selection[0];
     if (entity.kind === "unit") {
-      ui.selectionName.textContent = "Cartbot";
+      ui.selectionName.textContent = entity.owner === OWNER_ENEMY ? "Enemy Cartbot" : "Cartbot";
       ui.selectionMeta.textContent = unitStateText(entity);
       ui.portraitIcon.dataset.kind = "peon";
     } else if (entity.kind === "dummy") {
@@ -2836,15 +3638,16 @@
 
   function statusText() {
     if (state.commandMode) return modeStatusText();
-    const active = state.units.filter((unit) => unit.order?.type && unit.order.type !== "idle").length;
-    const queued = state.buildings.reduce((total, building) => total + building.queue.length, 0);
-    const upgraded = state.units.filter((unit) => unit.brainTier > 0).length;
-    return `${active}/${state.units.length} cartbots active. Queue: ${queued}. Capacity: ${usedWorkerCapacity()}/${workerCapacity()}. Brains: ${upgraded}/${state.units.length}.`;
+    const units = playerUnits();
+    const active = units.filter((unit) => unit.order?.type && unit.order.type !== "idle").length;
+    const queued = playerBuildings().reduce((total, building) => total + building.queue.length, 0);
+    const upgraded = units.filter((unit) => unit.brainTier > 0).length;
+    return `${active}/${units.length} cartbots active. Queue: ${queued}. Capacity: ${usedWorkerCapacity()}/${workerCapacity()}. Brains: ${upgraded}/${units.length}.`;
   }
 
   function renderManagement() {
     const counts = { idle: 0, ore: 0, lumber: 0, returning: 0, build: 0, recon: 0, attack: 0 };
-    for (const unit of state.units) {
+    for (const unit of playerUnits()) {
       const order = unit.order || { type: "idle" };
       if (order.type === "idle") counts.idle += 1;
       else if (order.type === "gather" && order.phase === "returning") counts.returning += 1;
@@ -2868,7 +3671,7 @@
   function renderControlGroups() {
     ui.groupStrip.innerHTML = "";
     const groups = [...state.controlGroups.entries()]
-      .map(([n, ids]) => [n, ids.filter((id) => state.units.some((unit) => unit.id === id))])
+      .map(([n, ids]) => [n, ids.filter((id) => state.units.some((unit) => unit.id === id && unit.owner === OWNER_PLAYER))])
       .filter(([, ids]) => ids.length);
     if (!groups.length) {
       const empty = document.createElement("span");
@@ -2903,6 +3706,7 @@
     const queued = buildQueueCount(unit);
     const queueText = queued ? `, ${queued} build queued` : "";
     const brain = BRAIN_TIERS[unit.brainTier || 0].short;
+    const owner = unit.owner === OWNER_ENEMY ? "Enemy " : unit.hackedBy ? "Captured " : "";
     if (!unit.order || unit.order.type === "idle") return `${brain}: Idle${carry}`;
     if (unit.order.type === "move") return `${brain}: Moving${carry}`;
     if (unit.order.type === "gather") {
@@ -2912,6 +3716,7 @@
     }
     if (unit.order.type === "attack") return `${brain}: Attacking`;
     if (unit.order.type === "attackMove") return `${brain}: Attack-moving`;
+    if (unit.order.type === "hack") return `${owner}${brain}: Hacking`;
     if (unit.order.type === "recon") return `${brain}: Recon route`;
     if (unit.order.type === "build") {
       const building = getBuilding(unit.order.buildingId);
@@ -2922,12 +3727,13 @@
 
   function resourceStateText(node) {
     const assigned = assignedBotCount(node);
+    if (node.exhausted) return `Exhausted - regenerates in ${formatTime(node.regenTimer || 0)}`;
     const remaining = `${Math.ceil(node.amount)}/${node.maxAmount} ${RESOURCE_TYPES[node.type].label}`;
     return `${remaining} - ${assigned} bot${assigned === 1 ? "" : "s"} assigned`;
   }
 
   function assignedBotCount(node) {
-    return state.units.filter((unit) => unit.order?.type === "gather" && unit.order.nodeId === node.id).length;
+    return playerUnits().filter((unit) => unit.order?.type === "gather" && unit.order.nodeId === node.id).length;
   }
 
   function compositionText(node, limit = 4) {
@@ -2975,8 +3781,8 @@
 
   function renderCommands(selection) {
     ui.actionGrid.innerHTML = "";
-    const base = selection.length === 1 && selection[0].kind === "building" && selection[0].type === "mainBase" ? selection[0] : null;
-    const hasUnit = selection.some((entity) => entity.kind === "unit");
+    const base = selection.length === 1 && selection[0].kind === "building" && selection[0].type === "mainBase" && selection[0].owner === OWNER_PLAYER ? selection[0] : null;
+    const hasUnit = selectedUnits().length > 0;
 
     if (base) {
       ui.actionGrid.append(
@@ -3082,6 +3888,16 @@
           disabled: !brainCost || !canAfford(brainCost),
           onClick: upgradeSelectedBrains,
         }),
+        commandButton({
+          label: "Hack",
+          icon: "H",
+          color: "#c79bff",
+          cost: null,
+          tip: "Intrusion Brain only. Tether-control one lower-brain enemy cartbot after a channel.",
+          disabled: !selectedUnits().some((unit) => canHack(unit)),
+          active: state.commandMode === "hack",
+          onClick: () => setCommandMode("hack"),
+        }),
       );
       return;
     }
@@ -3137,10 +3953,12 @@
       const entity = selection[0];
       if (entity.kind === "unit") {
         appendHealthRow("Hull", entity.hp, entity.maxHp);
+        appendDetailRow("Owner", entity.owner === OWNER_ENEMY ? "Enemy" : entity.hackedBy ? "Captured" : "Player");
         appendDetailRow("Brain", BRAIN_TIERS[entity.brainTier || 0].label);
         appendDetailRow("Order", unitStateText(entity));
         appendDetailRow("Move", `${Math.round(unitSpeed(entity))}/s`);
         appendDetailRow("Carry", entity.carried ? `${entity.carried.amount}/${unitCarryCapacity(entity)} ${RESOURCE_TYPES[entity.carried.type].carryLabel}` : `Empty / ${unitCarryCapacity(entity)}`);
+        if (brainTier(entity).canHack) appendDetailRow("Hack", entity.hackTargetId ? "Tether active" : `${Math.ceil(entity.hackCooldown || 0)}s cooldown`);
         appendDetailRow("Build Queue", buildQueueCount(entity) ? `${buildQueueCount(entity)} structure${buildQueueCount(entity) === 1 ? "" : "s"}` : "Empty");
         return;
       }
@@ -3168,6 +3986,7 @@
       }
       if (entity.kind === "resource") {
         appendMeterRow("Remaining", `${Math.ceil(entity.amount)}/${entity.maxAmount}`, entity.amount / entity.maxAmount, RESOURCE_TYPES[entity.type].color);
+        if (entity.exhausted) appendDetailRow("Regenerates", formatTime(entity.regenTimer || 0));
         appendDetailRow("Assigned", `${assignedBotCount(entity)} cartbot${assignedBotCount(entity) === 1 ? "" : "s"}`);
         appendDetailRow("Hex", hexLabel(entity.hex));
         for (const [name, value] of Object.entries(entity.composition)) {
@@ -3403,6 +4222,173 @@
     updatePointerFromClient(event.clientX, event.clientY);
   }
 
+  function updateSyncStatus(text = null) {
+    if (text) state.google.status = text;
+    if (ui.syncStatus) ui.syncStatus.textContent = state.google.status;
+    const configured = Boolean(GOOGLE_CONFIG.googleClientId);
+    if (ui.googleSignIn) {
+      ui.googleSignIn.disabled = state.google.busy || !configured;
+      ui.googleSignIn.textContent = state.google.signedIn ? "Google Connected" : "Connect Google Drive";
+    }
+    if (ui.googleSync) ui.googleSync.disabled = state.google.busy || !state.google.accessToken;
+    if (!configured) {
+      state.google.status = "Add googleClientId in src/config.js for Drive sync.";
+      if (ui.syncStatus) ui.syncStatus.textContent = state.google.status;
+    }
+    renderMissionControl();
+  }
+
+  function connectGoogle() {
+    if (!GOOGLE_CONFIG.googleClientId) {
+      updateSyncStatus("Add googleClientId in src/config.js for Drive sync.");
+      return;
+    }
+    if (!window.google?.accounts?.oauth2) {
+      updateSyncStatus("Google Identity Services is still loading.");
+      return;
+    }
+    if (!state.google.tokenClient) {
+      state.google.tokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CONFIG.googleClientId,
+        scope: DRIVE_SCOPE,
+        callback: (response) => {
+          if (response.error) {
+            updateSyncStatus(`Google sign-in failed: ${response.error}`);
+            return;
+          }
+          state.google.accessToken = response.access_token;
+          state.google.signedIn = true;
+          updateSyncStatus("Google Drive connected.");
+          syncCloudSave();
+        },
+      });
+    }
+    state.google.tokenClient.requestAccessToken({ prompt: state.google.accessToken ? "" : "consent" });
+  }
+
+  async function syncCloudSave() {
+    if (!state.google.accessToken) {
+      updateSyncStatus("Connect Google Drive first.");
+      return;
+    }
+    state.google.busy = true;
+    updateSyncStatus("Syncing save...");
+    try {
+      const localSnapshot = readLocalSnapshot() || saveSnapshot({ preserveUpdatedAt: true });
+      const remoteFile = await findDriveSave();
+      if (!remoteFile) {
+        await uploadDriveSave(localSnapshot);
+        updateSyncStatus("Cloud save created.");
+        return;
+      }
+
+      state.google.saveFileId = remoteFile.id;
+      const remoteSnapshot = await downloadDriveSave(remoteFile.id);
+      const localTime = Date.parse(localSnapshot.updatedAt || 0);
+      const remoteTime = Date.parse(remoteSnapshot.updatedAt || 0);
+
+      if (remoteSnapshot.updatedAt && remoteTime > localTime && JSON.stringify(remoteSnapshot) !== JSON.stringify(localSnapshot)) {
+        const useCloud = window.confirm("Cloud save is newer than local. Load cloud save? Cancel keeps local and uploads it.");
+        if (useCloud) {
+          restoreSnapshot(remoteSnapshot);
+          saveGame({ preserveUpdatedAt: true });
+          if (state.screen === "mission" && state.mission?.status === "active") showMissionScreen();
+          else showMissionControl();
+          updateSyncStatus("Loaded newer cloud save.");
+        } else {
+          await uploadDriveSave(localSnapshot);
+          updateSyncStatus("Kept local save and updated cloud.");
+        }
+        return;
+      }
+
+      if (localTime > remoteTime && JSON.stringify(remoteSnapshot) !== JSON.stringify(localSnapshot)) {
+        const uploadLocal = window.confirm("Local save is newer than cloud. Upload local save? Cancel loads cloud instead.");
+        if (uploadLocal) {
+          await uploadDriveSave(localSnapshot);
+          updateSyncStatus("Uploaded newer local save.");
+        } else {
+          restoreSnapshot(remoteSnapshot);
+          saveGame({ preserveUpdatedAt: true });
+          if (state.screen === "mission" && state.mission?.status === "active") showMissionScreen();
+          else showMissionControl();
+          updateSyncStatus("Loaded cloud save.");
+        }
+        return;
+      }
+
+      await uploadDriveSave(localSnapshot);
+      updateSyncStatus("Save synced.");
+    } catch (error) {
+      console.warn("Cloud sync failed", error);
+      updateSyncStatus("Cloud sync failed. Local save is still available.");
+    } finally {
+      state.google.busy = false;
+      updateSyncStatus();
+    }
+  }
+
+  async function findDriveSave() {
+    const params = new URLSearchParams({
+      spaces: "appDataFolder",
+      fields: "files(id,name,modifiedTime)",
+      pageSize: "1",
+      q: `name='${DRIVE_SAVE_NAME}' and trashed=false`,
+    });
+    const response = await fetch(`https://www.googleapis.com/drive/v3/files?${params.toString()}`, {
+      headers: driveHeaders(),
+    });
+    if (!response.ok) throw new Error(`Drive list failed: ${response.status}`);
+    const data = await response.json();
+    return data.files?.[0] || null;
+  }
+
+  async function downloadDriveSave(fileId) {
+    const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+      headers: driveHeaders(),
+    });
+    if (!response.ok) throw new Error(`Drive download failed: ${response.status}`);
+    return response.json();
+  }
+
+  async function uploadDriveSave(snapshot) {
+    const metadata = state.google.saveFileId ? { name: DRIVE_SAVE_NAME } : { name: DRIVE_SAVE_NAME, parents: ["appDataFolder"] };
+    const boundary = `nebula_${Date.now()}`;
+    const body = [
+      `--${boundary}`,
+      "Content-Type: application/json; charset=UTF-8",
+      "",
+      JSON.stringify(metadata),
+      `--${boundary}`,
+      "Content-Type: application/json; charset=UTF-8",
+      "",
+      JSON.stringify(snapshot),
+      `--${boundary}--`,
+      "",
+    ].join("\r\n");
+    const url = state.google.saveFileId
+      ? `https://www.googleapis.com/upload/drive/v3/files/${state.google.saveFileId}?uploadType=multipart&fields=id,modifiedTime`
+      : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime";
+    const response = await fetch(url, {
+      method: state.google.saveFileId ? "PATCH" : "POST",
+      headers: {
+        ...driveHeaders(),
+        "Content-Type": `multipart/related; boundary=${boundary}`,
+      },
+      body,
+    });
+    if (!response.ok) throw new Error(`Drive upload failed: ${response.status}`);
+    const data = await response.json();
+    state.google.saveFileId = data.id || state.google.saveFileId;
+    return data;
+  }
+
+  function driveHeaders() {
+    return {
+      Authorization: `Bearer ${state.google.accessToken}`,
+    };
+  }
+
   function handleKeyDown(event) {
     const key = event.key.toLowerCase();
 
@@ -3466,6 +4452,10 @@
       if (selectedUnits().length) upgradeSelectedBrains();
       return;
     }
+    if (key === "h") {
+      setCommandMode("hack");
+      return;
+    }
 
     if (key.startsWith("arrow")) event.preventDefault();
     state.keys.add(key);
@@ -3509,7 +4499,17 @@
     canvas.addEventListener("wheel", handleWheel, { passive: false });
     mini.addEventListener("click", handleMiniMapClick);
     mini.addEventListener("wheel", handleMiniMapWheel, { passive: false });
+    ui.startMission.addEventListener("click", startTotalDominationMission);
+    ui.continueMission.addEventListener("click", continueMission);
+    ui.restart.addEventListener("click", returnToMissionControl);
+    ui.googleSignIn.addEventListener("click", connectGoogle);
+    ui.googleSync.addEventListener("click", syncCloudSave);
   }
+
+  window.nebulaDebug = {
+    camera: () => ({ ...state.camera }),
+    save: () => saveSnapshot({ preserveUpdatedAt: true }),
+  };
 
   bind();
   resize();
