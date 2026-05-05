@@ -706,6 +706,7 @@
     setupEarthResourceNodes();
     setupTrainingDummies();
     setupEnemyOutposts();
+    runMissionScanner();
 
     state.selectedIds.add(bot.id);
     showMissionScreen();
@@ -854,6 +855,42 @@
         bot.angle = Math.atan2(p.y - base.y, p.x - base.x);
       }
     }
+  }
+
+  function runMissionScanner() {
+    const level = metaLevel("scanner");
+    if (!level) return;
+    const playerBase = nearestDropoff(OWNER_PLAYER);
+    if (!playerBase) return;
+    const enemyBase = enemyBuildings()
+      .filter((building) => building.type === "mainBase")
+      .sort((a, b) => distance(playerBase, a) - distance(playerBase, b))[0];
+    if (enemyBase) {
+      state.worldAlerts.unshift({
+        text: "Scanner bearing: enemy base signature.",
+        x: enemyBase.x,
+        y: enemyBase.y,
+        type: "danger",
+        t: 18,
+        max: 18,
+      });
+      state.miniMapPings.push({ x: enemyBase.x, y: enemyBase.y, type: "danger", t: 7, max: 7 });
+    }
+    const richNodes = [...state.nodes]
+      .sort((a, b) => b.maxAmount - a.maxAmount)
+      .slice(0, Math.min(1 + level, 4));
+    for (const node of richNodes) {
+      state.worldAlerts.unshift({
+        text: `Scanner survey: ${node.name}.`,
+        x: node.x,
+        y: node.y,
+        type: "resource",
+        t: 14,
+        max: 14,
+      });
+      state.miniMapPings.push({ x: node.x, y: node.y, type: "resource", t: 6, max: 6 });
+    }
+    announce("Mission scanner marked enemy direction and rich deposits.");
   }
 
   function showMissionControl() {
